@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SQLite Dashboard</title>
+  <style>
+    body { font-family: sans-serif; max-width: 500px; margin: 2rem auto; padding: 0 1rem; background: #0f172a; color: #f8fafc; }
+    .card { background: #1e293b; padding: 1.2rem; border-radius: 12px; margin-bottom: 1.5rem; }
+    button { background: #3b82f6; color: white; border: none; padding: 0.6rem 1.2rem; border-radius: 8px; font-weight: bold; cursor: pointer; }
+    button.delete-btn { background: #ef4444; padding: 0.3rem 0.6rem; font-size: 0.8rem; margin-left: 0.5rem; }
+    input { width: 90%; padding: 0.6rem; border-radius: 8px; border: 1px solid #475569; background: #0f172a; color: white; margin-bottom: 0.8rem; }
+    ul { list-style: none; padding: 0; margin: 0; }
+    li { background: #0f172a; padding: 0.8rem; border-radius: 8px; margin-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: center; }
+    .time { color: #94a3b8; font-size: 0.8rem; display: block; }
+  </style>
+</head>
+<body>
+  <h1>💾 SQLite Node.js App</h1>
+
+  <div class="card">
+    <h3>Neuen Eintrag speichern</h3>
+    <input type="text" id="nachrichtInput" placeholder="Nachricht in Datenbank schreiben...">
+    <button onclick="saveMessage()">Speichern</button>
+  </div>
+
+  <div class="card">
+    <h3>Gespeicherte Einträge</h3>
+    <ul id="messageList">Lade Daten...</ul>
+  </div>
+
+  <script>
+    async function loadMessages() {
+      const res = await fetch('/api/nachrichten');
+      const messages = await res.json();
+      const list = document.getElementById('messageList');
+      
+      if (messages.length === 0) {
+        list.innerHTML = '<li>Keine Einträge vorhanden.</li>';
+        return;
+      }
+
+      list.innerHTML = messages.map(msg => `
+        <li>
+          <div>
+            <strong>${msg.text}</strong>
+            <span class="time">${msg.erstellt_am}</span>
+          </div>
+          <button class="delete-btn" onclick="deleteMessage(${msg.id})">Löschen</button>
+        </li>
+      `).join('');
+    }
+
+    async function saveMessage() {
+      const input = document.getElementById('nachrichtInput');
+      if (!input.value.trim()) return;
+
+      await fetch('/api/nachrichten', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: input.value })
+      });
+
+      input.value = '';
+      loadMessages();
+    }
+
+    async function deleteMessage(id) {
+      await fetch(`/api/nachrichten/${id}`, { method: 'DELETE' });
+      loadMessages();
+    }
+
+    // Beim Laden der Seite Einträge automatisch abrufen
+    loadMessages();
+  </script>
+</body>
+</html>
+
