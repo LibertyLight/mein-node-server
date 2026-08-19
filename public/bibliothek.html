@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bibliotheks-Helfer</title>
+  <style>
+    body { font-family: sans-serif; max-width: 500px; margin: 1.5rem auto; padding: 0 1rem; background: #0f172a; color: #f8fafc; }
+    h1 { font-size: 1.4rem; }
+    .card { background: #1e293b; padding: 1.2rem; border-radius: 12px; margin-bottom: 1.2rem; }
+    h3 { margin-top: 0; font-size: 1rem; color: #cbd5e1; }
+    button { background: #3b82f6; color: white; border: none; padding: 0.7rem 1.2rem; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 1rem; }
+    button:disabled { background: #475569; }
+    button.zweitrangig { background: #334155; }
+    button.delete-btn { background: #ef4444; padding: 0.3rem 0.6rem; font-size: 0.8rem; margin-left: 0.5rem; }
+    input, select { width: 100%; box-sizing: border-box; padding: 0.7rem; border-radius: 8px; border: 1px solid #475569; background: #0f172a; color: white; margin-bottom: 0.8rem; font-size: 1rem; }
+    a.aktion { display: block; text-align: center; background: #22c55e; color: #052e16; text-decoration: none; padding: 0.9rem; border-radius: 8px; font-weight: bold; margin-bottom: 0.6rem; }
+    ul { list-style: none; padding: 0; margin: 0; }
+    li { background: #0f172a; padding: 0.8rem; border-radius: 8px; margin-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+    .meta { color: #94a3b8; font-size: 0.85rem; display: block; margin-top: 0.2rem; }
+    .fehler { color: #fca5a5; }
+    .hinweis { color: #94a3b8; font-size: 0.8rem; line-height: 1.4; }
+    .titel { font-size: 1.05rem; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>📚 Bibliotheks-Helfer</h1>
+
+  <div class="card">
+    <h3>Bibliothek</h3>
+    <select id="bibliothekSelect"></select>
+    <input type="text" id="eigeneDomain" placeholder="Eigene GENIOS-Adresse, z. B. bib-xyz.genios.de" hidden>
+    <p class="hinweis">Die Anmeldung passiert im Browser mit deinem Ausweis. Dieser Server speichert keine Zugangsdaten.</p>
+  </div>
+
+  <div class="card">
+    <h3>Artikel nachschlagen</h3>
+    <input type="url" id="urlInput" placeholder="Artikel-Adresse einfügen…" inputmode="url">
+    <button id="analysierenBtn" onclick="analysieren()">Nachschlagen</button>
+    <p id="status" class="hinweis"></p>
+  </div>
+
+  <div class="card" id="ergebnisCard" hidden>
+    <h3>Gefunden</h3>
+    <div id="ergebnis"></div>
+  </div>
+
+  <div class="card">
+    <h3>Zuletzt gesucht</h3>
+    <ul id="verlaufListe">Lade…</ul>
+  </div>
+
+  <script>
+    let letztesErgebnis = null;
+
+    async function ladeBibliotheken() {
+      const select = document.getElementById('bibliothekSelect');
+      const anbieter = await (await fetch('/api/bibliothek/anbieter')).json();
+      const gespeichert = localStorage.getItem('bibliothek') || '';
+
+      select.innerHTML =
+        '<option value="">– bitte wählen –</option>' +
+        anbieter.map(a => `<option value="${a.id}">${a.name}</option>`).join('') +
+        '<option value="eigene">Andere Bibliothek (Adresse selbst eintragen)</option>';
+
+      select.value = gespeichert;
+      select.onchange = () => {
+        localStorage.setItem('bibliothek', select.value);
+        zeigeDomainFeld();
+      };
+      zeigeDomainFeld();
+    }
+
+    function zeigeDomainFeld() {
+      const feld = document.getElementById('eigeneDomain');
+      const eigene = document.getElementById('bibliothekSelect').value === 'eigene';
+      feld.hidden = !eigene;
+      if (eigene) feld.value = localStorage.getItem('eigeneDomain') || '';
+      feld.onchange = () => localStorage.setItem('eigeneDomain', feld.value.trim());
+    }
+
+    async function analysieren() {
+      const url = document.getElementById('urlInput').value.trim();
+      const status = document.getElementById('status');
+      const knopf = document.getElementById('analysierenBtn');
+      const bibliothek = document.getElementById('bibliothekSelect').value;
+
+      if (!url) { status.textContent = 'Bitte erst eine Artikel-Adresse einfügen.'; return; }
+
+      knopf.disabled = true;
+      status.className = 'hinweis';
+      status.textContent = 'Lese die Kopfdaten des Artikels…';
+
+      try {
+        const antwort = await fetch('/api/bibliothek/analysieren', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url,
+            bibliothek: bibliothek === 'eigene' ? '' : bibliothek,
+            domain: document.getElementById('eigeneDomain').value.trim()
+          })
+        });
+        const daten = await antwort.json();
+
+        if (!antwort.ok) {
+          status.className = 'fehler';
+          status.textContent = daten.fehler || 'Das hat nicht geklappt.';
+          return;
+        }
+
+        status.textContent = '';
+        letztesErgebnis = { ...daten, artikel_url: url, bibliothek };
+        zeigeErgebnis(letztesErgebnis);
+      } catch (fehler) {
+        status.className = 'fehler';
+        status.textContent = 'Der Server ist nicht erreichbar.';
+      } finally {
+        knopf.disabled = false;
+      }
+    }
+
+    function zeigeErgebnis(daten) {
+      const card = document.getElementById('ergebnisCard');
+      const ziel = document.getElementById('ergebnis');
+      const zeilen = [daten.publikation, daten.datum, daten.autor].filter(Boolean).join(' · ');
+
+      ziel.innerHTML = `
+        <p class="titel">${escapeHtml(daten.titel)}</p>
+        <span class="meta">${escapeHtml(zeilen)}</span>
+        <p></p>
+        ${daten.suche_url
+          ? `<a class="aktion" href="${escapeHtml(daten.suche_url)}" target="_blank" rel="noopener"
+               onclick="merken()">In der Bibliothek öffnen</a>`
+          : '<p class="fehler">Keine Bibliothek ausgewählt – oben eine auswählen und erneut nachschlagen.</p>'}
+        <button class="zweitrangig" onclick="kopieren()">Titel kopieren</button>
+      `;
+      card.hidden = false;
+    }
+
+    async function kopieren() {
+      if (!letztesErgebnis) return;
+      await navigator.clipboard.writeText(letztesErgebnis.suchbegriff || letztesErgebnis.titel);
+      document.getElementById('status').textContent = 'Titel kopiert.';
+    }
+
+    async function merken() {
+      if (!letztesErgebnis) return;
+      await fetch('/api/bibliothek/verlauf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          artikel_url: letztesErgebnis.artikel_url,
+          titel: letztesErgebnis.titel,
+          publikation: letztesErgebnis.publikation,
+          datum: letztesErgebnis.datum,
+          bibliothek: letztesErgebnis.bibliothek
+        })
+      });
+      ladeVerlauf();
+    }
+
+    async function ladeVerlauf() {
+      const liste = document.getElementById('verlaufListe');
+      const eintraege = await (await fetch('/api/bibliothek/verlauf')).json();
+
+      if (eintraege.length === 0) {
+        liste.innerHTML = '<li>Noch nichts nachgeschlagen.</li>';
+        return;
+      }
+
+      liste.innerHTML = eintraege.map(e => `
+        <li>
+          <div>
+            <a href="${escapeHtml(e.artikel_url)}" target="_blank" rel="noopener">${escapeHtml(e.titel)}</a>
+            <span class="meta">${escapeHtml([e.publikation, e.datum].filter(Boolean).join(' · '))}</span>
+          </div>
+          <button class="delete-btn" onclick="loeschen(${e.id})">Löschen</button>
+        </li>
+      `).join('');
+    }
+
+    async function loeschen(id) {
+      await fetch(`/api/bibliothek/verlauf/${id}`, { method: 'DELETE' });
+      ladeVerlauf();
+    }
+
+    function escapeHtml(text) {
+      return String(text ?? '').replace(/[&<>"']/g, zeichen => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      })[zeichen]);
+    }
+
+    ladeBibliotheken();
+    ladeVerlauf();
+  </script>
+</body>
+</html>

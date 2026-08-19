@@ -85,3 +85,56 @@ Zuverlaessiger Ersatz auf dem Handy ohne Erweiterung: direkt bei der Bibliothek
 anmelden (z. B. `wiso-net.de` ueber den Bibliothekszugang) und den Artikel dort
 per Titelsuche oeffnen. Genau das automatisiert BibBot - manuell sind es zwei
 Klicks mehr, dafuer funktioniert es in jedem Browser.
+
+## Weg C - Bibliotheks-Helfer im eigenen Dashboard
+
+Wenn keine Erweiterung laufen will, braucht es auch keine: Der Node-Server kann
+den Teil uebernehmen, der auf dem Handy nervt - das Abtippen von Titel und Datum
+in die Suchmaske der Bibliothek.
+
+Server starten und im Browser oeffnen:
+
+```bash
+node app.js
+# dann: http://localhost:3000/bibliothek.html
+# oder vom Handy aus: http://<IP-des-Handys>:3000/bibliothek.html
+```
+
+Ablauf: Bibliothek einmalig auswaehlen (wird im Browser gespeichert),
+Artikel-Adresse einfuegen, **Nachschlagen** tippen. Der Server liest die
+Kopfdaten des Artikels und baut daraus die GENIOS-Suchadresse. Ein Tipp auf
+**In der Bibliothek oeffnen** landet direkt im Suchergebnis - dort meldest du
+dich wie gewohnt mit deinem Ausweis an.
+
+### Was der Server dabei tut - und was nicht
+
+* Gelesen werden **nur die Kopfdaten**: Titel, Autor, Datum, Publikation. Das
+  sind die Angaben, die Redaktionen fuer Suchmaschinen und Link-Vorschauen offen
+  ausliefern.
+* Der Artikeltext wird **nicht** ausgewertet, auch nicht wenn er im JSON-LD der
+  Seite mitgeliefert wird. Den Text liefert die Bibliotheksdatenbank, bei der du
+  angemeldet bist.
+* Zugangsdaten werden **nirgends** gespeichert oder weitergereicht. Die Anmeldung
+  passiert ausschliesslich im Browser.
+* Adressen aus dem lokalen Netz (192.168.x.x, 10.x.x.x, localhost …) ruft der
+  Server nicht ab - auch nicht ueber eine Weiterleitung. Sonst koennte man ihm
+  ueber das Eingabefeld den Router unterschieben.
+
+### API
+
+| Route | Zweck |
+| --- | --- |
+| `GET /api/bibliothek/anbieter` | Liste der hinterlegten Bibliotheken |
+| `POST /api/bibliothek/analysieren` | `{ url, bibliothek }` → Kopfdaten + fertige Suchadresse |
+| `GET /api/bibliothek/verlauf` | die letzten 25 Nachschlagevorgaenge |
+| `POST /api/bibliothek/verlauf` | Eintrag merken |
+| `DELETE /api/bibliothek/verlauf/:id` | Eintrag loeschen |
+
+Tests: `npm test`
+
+### Grenzen
+
+Steht ein Artikel nicht in der Pressedatenbank, hilft auch die beste Suchadresse
+nicht - dann ist der Text ueber die Bibliothek schlicht nicht lizenziert. Und
+Titel weichen zwischen Online-Fassung und Datenbank manchmal ab; in dem Fall
+ueber **Titel kopieren** den Suchbegriff nehmen und in der Datenbank kuerzen.
