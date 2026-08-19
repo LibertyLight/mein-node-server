@@ -141,8 +141,11 @@ app.delete('/api/bibliothek/verlauf/:id', (req, res) => {
   res.json({ erfolg: true });
 });
 
-app.listen(PORT, () => {
+// An 0.0.0.0 binden, damit auch die Dashboard-App und andere Geraete im
+// WLAN den Server ueber die IP des Handys erreichen.
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server läuft mit nativer SQLite auf http://localhost:${PORT}`);
+  console.log(`Bibliotheks-Helfer:  http://localhost:${PORT}/bibliothek.html`);
 });
 
 
