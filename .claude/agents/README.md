@@ -16,9 +16,18 @@ Agents aufgerufen werden. In den Beschreibungen sind Umlaute unproblematisch.
 
 ## Anpassungen gegenüber den Originalen
 
-**Namen und Beschreibungen** sind eingedeutscht. Die Beschreibung entscheidet
-mit, wann Claude einen Agent von sich aus heranzieht — sie nennt deshalb
-jeweils auch den Anlass („Einsetzen bei …").
+**Sprache.** Namen, Beschreibungen und Fließtexte sind auf Deutsch. Die
+Beschreibung entscheidet mit, wann Claude einen Agent von sich aus heranzieht —
+sie nennt deshalb jeweils auch den Anlass („Einsetzen bei …"). Kommandos,
+Bezeichner und Fachbegriffe wie Middleware, PRAGMA oder ShellCheck sind
+unübersetzt geblieben.
+
+**Zwei sachliche Korrekturen im `code-inspektor`.** Das Original wies den Agent
+an, einen „context manager" abzufragen — den gibt es in Claude Code nicht, das
+ist ein Konzept aus dem Framework des Autors. An der Stelle stehen jetzt echte
+erste Arbeitsschritte. Ebenso nannte es acht verwandte Agents, von denen keiner
+in diesem Projekt existiert; die Liste verweist jetzt auf die drei tatsächlich
+vorhandenen.
 
 **Modell-ID.** Die drei Agents von
 [0xfurai](https://github.com/0xfurai/claude-code-subagents) pinnten alle die
