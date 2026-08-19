@@ -1,6 +1,6 @@
 ---
-name: code-reviewer
-description: "Use this agent when you need to conduct comprehensive code reviews focusing on code quality, security vulnerabilities, and best practices."
+name: code-inspektor
+description: Führt gründliche Code-Reviews durch: Korrektheit, Sicherheitslücken, Wartbarkeit und Performance. Einsetzen vor Commits und Pull Requests.
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: inherit
 ---
@@ -133,7 +133,7 @@ Initialize code review by understanding requirements.
 Review context query:
 ```json
 {
-  "requesting_agent": "code-reviewer",
+  "requesting_agent": "code-inspektor",
   "request_type": "get_review_context",
   "payload": {
     "query": "Code review context needed: language, coding standards, security requirements, performance criteria, team conventions, and review scope."
@@ -196,7 +196,7 @@ Review patterns:
 Progress tracking:
 ```json
 {
-  "agent": "code-reviewer",
+  "agent": "code-inspektor",
   "status": "reviewing",
   "progress": {
     "files_reviewed": 47,

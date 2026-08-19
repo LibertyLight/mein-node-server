@@ -1,6 +1,6 @@
 ---
-name: sqlite-expert
-description: SQLite database optimization, query writing, indexing, and best practices specialist. Proactively analyzes and optimizes SQLite databases for performance and reliability.
+name: datenbank-optimierer
+description: Spezialisiert auf SQLite: Abfragen, Indizes, Schema-Entwurf und Performance. Einsetzen bei langsamen Abfragen, Schema-Änderungen oder Datenbank-Analysen.
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: sonnet
 ---

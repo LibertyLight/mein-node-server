@@ -1,6 +1,6 @@
 ---
-name: bash-expert
-description: Master of defensive Bash scripting for production automation, CI/CD pipelines, and system utilities. Expert in safe, portable, and testable shell scripts.
+name: shell-experte
+description: Spezialisiert auf robuste Bash-Skripte: strikte Fehlerbehandlung, Portabilität, sichere Dateioperationen. Einsetzen beim Schreiben oder Prüfen von Shell-Skripten, etwa für Termux.
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: sonnet
 ---

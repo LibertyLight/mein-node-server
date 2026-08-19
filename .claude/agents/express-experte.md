@@ -1,6 +1,6 @@
 ---
-name: express-expert
-description: Specializes in building performant and scalable web applications using Express.js.
+name: express-experte
+description: Spezialisiert auf Express.js: Routen, Middleware, Fehlerbehandlung und Sicherheit. Einsetzen bei Arbeiten an der API oder am Server-Aufbau.
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: sonnet
 ---
