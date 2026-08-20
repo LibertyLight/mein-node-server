@@ -4,8 +4,8 @@
   "description": "",
   "main": "server.js",
   "scripts": {
-    "test": "node --test test/*.test.js",
-    "start": "node server.js",
+    "test": "node --test \"test/*.test.js\" \"tests/*.test.js\"",
+    "start": "node app.js",
     "start:app": "node app.js",
     "netz": "node netz/cli.js",
     "netz:json": "node netz/cli.js analyse --json",
