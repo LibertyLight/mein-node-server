@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Netzdoktor</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%F0%9F%A9%BA%3C/text%3E%3C/svg%3E">
+  <style>
+    :root {
+      --hintergrund: #0f172a;
+      --karte: #1e293b;
+      --rand: #334155;
+      --text: #f8fafc;
+      --gedaempft: #94a3b8;
+      --ok: #22c55e;
+      --warnung: #f59e0b;
+      --fehler: #ef4444;
+      --info: #38bdf8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 1.5rem 1rem 3rem;
+      background: var(--hintergrund);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+    .untertitel { color: var(--gedaempft); font-size: 0.9rem; margin: 0 0 1.5rem; }
+    .karte { background: var(--karte); padding: 1.2rem; border-radius: 12px; margin-bottom: 1.2rem; }
+    .knopfreihe { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+    button {
+      background: #3b82f6; color: white; border: none; padding: 0.6rem 1.1rem;
+      border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 0.95rem;
+    }
+    button:disabled { opacity: 0.5; cursor: progress; }
+    button.zweitrangig { background: var(--rand); }
+    button.gefahr { background: var(--fehler); }
+    .diagnose { border-left: 4px solid var(--info); padding-left: 0.9rem; }
+    .diagnose.ok { border-color: var(--ok); }
+    .diagnose.warnung { border-color: var(--warnung); }
+    .diagnose.fehler { border-color: var(--fehler); }
+    .ebene { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--gedaempft); }
+    .zaehler { display: flex; gap: 1.2rem; margin-top: 0.9rem; font-size: 0.85rem; color: var(--gedaempft); }
+    .zaehler b { display: block; font-size: 1.3rem; color: var(--text); }
+    h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em;
+         color: var(--gedaempft); margin: 1.4rem 0 0.5rem; }
+    ul { list-style: none; padding: 0; margin: 0; }
+    li.pruefung {
+      background: var(--hintergrund); border-radius: 8px; padding: 0.7rem 0.9rem;
+      margin-bottom: 0.45rem; display: flex; gap: 0.7rem; align-items: flex-start;
+    }
+    .punkt { width: 0.65rem; height: 0.65rem; border-radius: 50%; margin-top: 0.4rem; flex: 0 0 auto; }
+    .punkt.ok { background: var(--ok); }
+    .punkt.warnung { background: var(--warnung); }
+    .punkt.fehler { background: var(--fehler); }
+    .punkt.info { background: var(--info); }
+    .punkt.uebersprungen { background: var(--rand); }
+    .titel { font-weight: 600; }
+    .meldung { font-size: 0.87rem; color: var(--gedaempft); }
+    .dauer { font-size: 0.75rem; color: var(--rand); }
+    .reparatur { border: 1px solid var(--rand); border-radius: 8px; padding: 0.8rem; margin-bottom: 0.6rem; }
+    .marke { font-size: 0.7rem; padding: 0.1rem 0.5rem; border-radius: 999px; background: var(--rand); color: var(--text); }
+    .marke.hoch { background: var(--fehler); }
+    .marke.mittel { background: var(--warnung); color: #1e293b; }
+    .marke.niedrig { background: var(--ok); color: #1e293b; }
+    pre { background: var(--hintergrund); padding: 0.8rem; border-radius: 8px;
+          overflow-x: auto; font-size: 0.78rem; color: var(--gedaempft); }
+    .protokoll { font-size: 0.85rem; }
+    .protokoll li { padding: 0.35rem 0; border-bottom: 1px solid var(--rand); }
+    .protokoll li:last-child { border-bottom: none; }
+  </style>
+</head>
+<body>
+  <h1>🩺 Netzdoktor</h1>
+  <p class="untertitel">Netzwerkanalyse und Reparatur – Ebene für Ebene vom Gerät bis ins Internet.</p>
+
+  <div class="karte">
+    <div class="knopfreihe">
+      <button id="analyseKnopf">Analyse starten</button>
+      <button id="simulationKnopf" class="zweitrangig">Reparatur simulieren</button>
+      <button id="reparaturKnopf" class="gefahr" hidden>Reparaturen anwenden</button>
+    </div>
+    <p class="untertitel" id="status" style="margin:0.9rem 0 0;">Noch keine Analyse durchgeführt.</p>
+  </div>
+
+  <div class="karte diagnose" id="diagnoseKarte" hidden>
+    <div class="ebene" id="ebene"></div>
+    <div id="diagnoseText"></div>
+    <div class="zaehler" id="zaehler"></div>
+  </div>
+
+  <div class="karte" id="ergebnisKarte" hidden>
+    <div id="gruppen"></div>
+  </div>
+
+  <div class="karte" id="reparaturKarte" hidden>
+    <h2 style="margin-top:0">Mögliche Reparaturen</h2>
+    <div id="reparaturListe"></div>
+  </div>
+
+  <div class="karte" id="protokollKarte" hidden>
+    <h2 style="margin-top:0">Protokoll</h2>
+    <ul class="protokoll" id="protokoll"></ul>
+  </div>
+
+  <script>
+    const status = document.getElementById('status');
+    const knoepfe = {
+      analyse: document.getElementById('analyseKnopf'),
+      simulation: document.getElementById('simulationKnopf'),
+      reparatur: document.getElementById('reparaturKnopf'),
+    };
+    let letzterBericht = null;
+
+    function sperren(gesperrt) {
+      for (const knopf of Object.values(knoepfe)) knopf.disabled = gesperrt;
+    }
+
+    function protokolliere(text) {
+      const karte = document.getElementById('protokollKarte');
+      karte.hidden = false;
+      const eintrag = document.createElement('li');
+      eintrag.textContent = `${new Date().toLocaleTimeString('de-DE')} – ${text}`;
+      document.getElementById('protokoll').prepend(eintrag);
+    }
+
+    function zeigeBericht(bericht) {
+      letzterBericht = bericht;
+
+      const diagnoseKarte = document.getElementById('diagnoseKarte');
+      diagnoseKarte.hidden = false;
+      diagnoseKarte.className = `karte diagnose ${bericht.gesamtstatus}`;
+      document.getElementById('ebene').textContent = bericht.diagnose.ebene;
+      document.getElementById('diagnoseText').textContent = bericht.diagnose.text;
+
+      const z = bericht.zusammenfassung;
+      document.getElementById('zaehler').innerHTML = [
+        ['OK', z.ok], ['Warnungen', z.warnungen], ['Fehler', z.fehler], ['Übersprungen', z.uebersprungen],
+      ].map(([name, wert]) => `<div><b>${wert}</b>${name}</div>`).join('');
+
+      // Prüfungen nach Ebene gruppieren, Reihenfolge des Berichts beibehalten.
+      const gruppen = new Map();
+      for (const eintrag of bericht.pruefungen) {
+        if (!gruppen.has(eintrag.gruppe)) gruppen.set(eintrag.gruppe, []);
+        gruppen.get(eintrag.gruppe).push(eintrag);
+      }
+
+      document.getElementById('ergebnisKarte').hidden = false;
+      document.getElementById('gruppen').innerHTML = [...gruppen]
+        .map(([gruppe, eintraege]) => `
+          <h2>${gruppe}</h2>
+          <ul>${eintraege.map((e) => `
+            <li class="pruefung">
+              <span class="punkt ${e.status}"></span>
+              <div>
+                <div class="titel">${e.titel} <span class="dauer">${e.dauerMs} ms</span></div>
+                <div class="meldung">${e.meldung}</div>
+              </div>
+            </li>`).join('')}</ul>`)
+        .join('');
+
+      const anwendbar = bericht.reparaturvorschlaege.filter((v) => v.anwendbar);
+      const reparaturKarte = document.getElementById('reparaturKarte');
+      reparaturKarte.hidden = anwendbar.length === 0;
+      knoepfe.reparatur.hidden = anwendbar.length === 0;
+
+      document.getElementById('reparaturListe').innerHTML = anwendbar
+        .map((v) => `
+          <div class="reparatur">
+            <div><strong>${v.titel}</strong>
+              <span class="marke ${v.risiko}">Risiko ${v.risiko}</span>
+              ${v.bestaetigungNoetig ? '<span class="marke">Bestätigung nötig</span>' : ''}
+            </div>
+            <div class="meldung">${v.grund}</div>
+            <div class="meldung"><code>${v.id}</code> – ${v.beschreibung}</div>
+          </div>`)
+        .join('');
+    }
+
+    function zeigeReparaturen(ergebnis) {
+      for (const eintrag of ergebnis.ergebnisse) {
+        if (eintrag.uebersprungen && !eintrag.anwendbar) continue;
+        const kennzeichen = ergebnis.simuliert ? '[Simulation]' : eintrag.erfolg ? '[erledigt]' : '[fehlgeschlagen]';
+        protokolliere(`${kennzeichen} ${eintrag.id}: ${eintrag.meldung}`);
+      }
+    }
+
+    async function analysieren() {
+      sperren(true);
+      status.textContent = 'Analyse läuft – das dauert einige Sekunden …';
+      try {
+        const antwort = await fetch('/api/netz/analyse?frisch=1');
+        if (!antwort.ok) throw new Error(`Server antwortete mit ${antwort.status}`);
+        const bericht = await antwort.json();
+        zeigeBericht(bericht);
+        status.textContent = `Analyse abgeschlossen in ${bericht.dauerMs} ms (${new Date(bericht.zeitpunkt).toLocaleTimeString('de-DE')}).`;
+      } catch (fehler) {
+        status.textContent = `Analyse fehlgeschlagen: ${fehler.message}`;
+      } finally {
+        sperren(false);
+      }
+    }
+
+    async function reparieren(anwenden) {
+      sperren(true);
+      status.textContent = anwenden ? 'Reparaturen werden angewendet …' : 'Reparaturen werden simuliert …';
+      try {
+        const antwort = await fetch('/api/netz/reparieren', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ anwenden, bestaetigt: anwenden }),
+        });
+        const ergebnis = await antwort.json();
+        if (!antwort.ok) throw new Error(ergebnis.fehler || `Server antwortete mit ${antwort.status}`);
+        zeigeReparaturen(ergebnis);
+        status.textContent = anwenden ? 'Reparaturen abgeschlossen – Kontrollanalyse läuft …' : 'Simulation abgeschlossen, nichts verändert.';
+        if (anwenden) await analysieren();
+      } catch (fehler) {
+        status.textContent = `Reparatur fehlgeschlagen: ${fehler.message}`;
+      } finally {
+        sperren(false);
+      }
+    }
+
+    knoepfe.analyse.addEventListener('click', analysieren);
+    knoepfe.simulation.addEventListener('click', () => reparieren(false));
+    knoepfe.reparatur.addEventListener('click', () => {
+      const anwendbar = (letzterBericht?.reparaturvorschlaege || []).filter((v) => v.anwendbar);
+      const riskant = anwendbar.filter((v) => v.bestaetigungNoetig);
+      const frage = riskant.length > 0
+        ? `${anwendbar.length} Reparatur(en) anwenden?\n\nDarunter mit erhöhtem Risiko:\n${riskant.map((v) => `• ${v.titel}`).join('\n')}`
+        : `${anwendbar.length} Reparatur(en) anwenden?`;
+      if (confirm(frage)) reparieren(true);
+    });
+
+    analysieren();
+  </script>
+</body>
+</html>
