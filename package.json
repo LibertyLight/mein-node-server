@@ -4,8 +4,13 @@
   "description": "",
   "main": "server.js",
   "scripts": {
-    "test": "node --test \"tests/*.test.js\"",
-    "start": "node app.js"
+    "test": "node --test \"test/*.test.js\" \"tests/*.test.js\"",
+    "start": "node app.js",
+    "start:app": "node app.js",
+    "netz": "node netz/cli.js",
+    "netz:json": "node netz/cli.js analyse --json",
+    "netz:reparieren": "node netz/cli.js reparieren",
+    "netz:beobachten": "node netz/cli.js beobachten"
   },
   "keywords": [],
   "author": "",
@@ -17,5 +22,8 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
+  },
+  "bin": {
+    "netzdoktor": "netz/cli.js"
   }
 }

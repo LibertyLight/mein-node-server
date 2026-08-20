@@ -1,5 +1,7 @@
 const express = require('express');
 const { DatabaseSync } = require('node:sqlite');
+const netzRouten = require('./netz/routen');
+const netzKonfig = require('./netz/konfig');
 
 const { BIBLIOTHEKEN, findeBibliothek, sucheUrl, bereinigeTitel } = require('./lib/bibliotheken');
 const { extrahiereMetadaten } = require('./lib/artikel-metadaten');
@@ -34,6 +36,13 @@ db.exec(`
 
 app.use(express.json());
 app.use(express.static('public'));
+
+// Netzdoktor: gespeicherte Netzwerkeinstellungen anwenden und Router einhängen.
+// Dashboard: http://localhost:3000/netz.html
+for (const hinweis of netzKonfig.anwenden()) {
+  console.log(`[netzdoktor] ${hinweis}`);
+}
+app.use('/api/netz', netzRouten.erstelleRouter({ port: PORT }));
 
 // Alle Einträge abrufen
 app.get('/api/nachrichten', (req, res) => {
@@ -145,7 +154,8 @@ app.delete('/api/bibliothek/verlauf/:id', (req, res) => {
 // WLAN den Server ueber die IP des Handys erreichen.
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server läuft mit nativer SQLite auf http://localhost:${PORT}`);
-  console.log(`Bibliotheks-Helfer:  http://localhost:${PORT}/bibliothek.html`);
+  console.log(`Bibliotheks-Helfer:    http://localhost:${PORT}/bibliothek.html`);
+  console.log(`Netzdoktor-Dashboard: http://localhost:${PORT}/netz.html`);
 });
 
 
