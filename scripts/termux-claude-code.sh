@@ -42,22 +42,27 @@ pkg install -y proot-distro
 
 # --- Linux-Umgebung -------------------------------------------------------
 
-if proot-distro list --installed 2>/dev/null | grep -q "^${DISTRO}\b" \
-   || [ -d "$PREFIX/var/lib/proot-distro/installed-rootfs/$DISTRO" ]; then
+# Funktionale Pruefung statt Pfad-Annahme: laesst sich die Distro starten,
+# ist sie installiert. Wo proot-distro das Rootfs ablegt, ist damit egal --
+# der Pfad hat sich zwischen den Versionen geaendert (5.6.0 ist eine
+# Python-Neufassung).
+if proot-distro login "$DISTRO" -- true >/dev/null 2>&1; then
   info "$DISTRO ist bereits installiert, wird uebersprungen"
 else
   info "$DISTRO installieren (das dauert je nach Verbindung einige Minuten)"
   proot-distro install "$DISTRO"
+  proot-distro login "$DISTRO" -- true >/dev/null 2>&1 \
+    || die "$DISTRO liess sich nach der Installation nicht starten."
 fi
-
-ROOTFS="$PREFIX/var/lib/proot-distro/installed-rootfs/$DISTRO"
-[ -d "$ROOTFS" ] || die "Rootfs nicht gefunden unter $ROOTFS"
 
 # --- Innerer Teil: laeuft in Debian ---------------------------------------
 
 info "Claude Code in $DISTRO installieren"
 
-cat > "$ROOTFS/root/claude-setup-inner.sh" <<'INNER'
+INNER_TMP="$(mktemp)"
+trap 'rm -f "$INNER_TMP"' EXIT
+
+cat > "$INNER_TMP" <<'INNER'
 #!/usr/bin/env bash
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -95,8 +100,11 @@ else
 fi
 INNER
 
-chmod +x "$ROOTFS/root/claude-setup-inner.sh"
-proot-distro login "$DISTRO" -- bash /root/claude-setup-inner.sh
+# Das Skript wird base64-kodiert uebergeben, damit weder ein Pfad im Rootfs
+# noch eine Bind-Mount-Option noetig ist. base64 liefert nur [A-Za-z0-9+/=],
+# ist also im Kommando unproblematisch.
+proot-distro login "$DISTRO" -- bash -c \
+  "echo $(base64 -w0 "$INNER_TMP") | base64 -d | bash"
 
 # --- Komfort in Termux ----------------------------------------------------
 

@@ -44,10 +44,16 @@ claude             # startet Claude Code
 
 ## Was du wissen solltest
 
-**Das Skript ist ungetestet.** Es wurde in einer x86-Linux-Umgebung
-geschrieben und nur auf Syntax geprüft, nicht auf einem Android-Gerät
-ausgeführt. Wenn ein Schritt scheitert, ist die Ausgabe an der Stelle der
-beste Anhaltspunkt.
+**Auf einem Gerät erprobt.** Android 15, ARM64, Termux mit proot-distro
+5.6.0 — Debian eingerichtet, Claude Code 2.1.236 unter
+`~/.local/bin/claude` installiert. Sollte ein Schritt bei dir scheitern,
+ist die Ausgabe an der Stelle der beste Anhaltspunkt.
+
+Eine Stolperfalle ist dabei aufgefallen: Frühere Fassungen des Skripts
+suchten das Rootfs unter `$PREFIX/var/lib/proot-distro/installed-rootfs/`.
+proot-distro 5.6.0 ist eine Python-Neufassung und legt es woanders ab.
+Das Skript verlässt sich deshalb auf keinen Pfad mehr, sondern prüft mit
+`proot-distro login debian -- true`, ob die Distro startet.
 
 **Getrennte Dateisysteme.** Dein Termux-Home und das Debian-Home sind zwei
 verschiedene Orte. Ein Projekt in `~/mein-node-server` (Termux) ist in Debian
