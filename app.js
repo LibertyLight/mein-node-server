@@ -1,5 +1,7 @@
 const express = require('express');
 const { DatabaseSync } = require('node:sqlite');
+const netzRouten = require('./netz/routen');
+const netzKonfig = require('./netz/konfig');
 
 const app = express();
 const PORT = 3000;
@@ -18,6 +20,13 @@ db.exec(`
 
 app.use(express.json());
 app.use(express.static('public'));
+
+// Netzdoktor: gespeicherte Netzwerkeinstellungen anwenden und Router einhängen.
+// Dashboard: http://localhost:3000/netz.html
+for (const hinweis of netzKonfig.anwenden()) {
+  console.log(`[netzdoktor] ${hinweis}`);
+}
+app.use('/api/netz', netzRouten.erstelleRouter({ port: PORT }));
 
 // Alle Einträge abrufen
 app.get('/api/nachrichten', (req, res) => {
@@ -52,6 +61,7 @@ app.delete('/api/nachrichten/:id', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Server läuft mit nativer SQLite auf http://localhost:${PORT}`);
+  console.log(`Netzdoktor-Dashboard: http://localhost:${PORT}/netz.html`);
 });
 
 
