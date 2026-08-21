@@ -44,6 +44,7 @@ const pruefungen = [
       const aktiv = alle.filter((s) => !s.intern);
       const ipv4 = aktiv.filter((s) => s.familie === 'IPv4');
       const ipv6 = aktiv.filter((s) => s.familie === 'IPv6');
+      const ipv6Global = ipv6.filter((s) => werkzeuge.istGlobalesIPv6(s.adresse));
 
       if (aktiv.length === 0) {
         return {
@@ -70,10 +71,17 @@ const pruefungen = [
         };
       }
 
+      const ipv6Hinweis = ipv6Global.length > 0 ? `, IPv6 ${ipv6Global[0].adresse}` : '';
       return {
         status: 'ok',
-        meldung: `${aktiv.length} aktive Adresse(n): ${ipv4.map((s) => `${s.name} ${s.adresse}`).join(', ')}`,
-        details: { schnittstellen: aktiv, ipv6Vorhanden: ipv6.length > 0 },
+        meldung: `${aktiv.length} aktive Adresse(n): ${ipv4.map((s) => `${s.name} ${s.adresse}`).join(', ')}${ipv6Hinweis}`,
+        details: {
+          schnittstellen: aktiv,
+          // Nur global routbare Adressen zählen. fe80:: hat jedes Gerät.
+          ipv6Vorhanden: ipv6Global.length > 0,
+          ipv6NurLokal: ipv6.length > 0 && ipv6Global.length === 0,
+          ipv6Adressen: ipv6Global.map((s) => s.adresse),
+        },
       };
     },
   },
@@ -291,9 +299,15 @@ const pruefungen = [
     titel: 'IPv6-Erreichbarkeit',
     gruppe: 'Internet',
     async ausfuehren(ktx) {
-      const vorhanden = ergebnis(ktx, 'schnittstellen')?.details?.ipv6Vorhanden;
-      if (!vorhanden) {
-        return { status: 'uebersprungen', meldung: 'Keine globale IPv6-Adresse vorhanden.', details: {} };
+      const schnittstellen = ergebnis(ktx, 'schnittstellen')?.details;
+      if (!schnittstellen?.ipv6Vorhanden) {
+        return {
+          status: 'uebersprungen',
+          meldung: schnittstellen?.ipv6NurLokal
+            ? 'Nur eine Link-Local-Adresse (fe80::) vorhanden – das Gerät nutzt kein IPv6 im Internet. Das ist normal und kein Fehler.'
+            : 'Keine globale IPv6-Adresse vorhanden.',
+          details: { ipv6NurLokal: Boolean(schnittstellen?.ipv6NurLokal) },
+        };
       }
 
       const treffer = await werkzeuge.tcpVerbindung(ZIELE.ipv6[0].host, ZIELE.ipv6[0].port, 4000);

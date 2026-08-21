@@ -62,7 +62,7 @@ könnte jeder im selben WLAN Prozesse auf dem Gerät beenden. Wer das bewusst
 | Gerät | `proxy` | Ist ein eingetragener Proxy erreichbar? |
 | Heimnetz | `gateway` | Antwortet der Router? |
 | Internet | `internet-tcp` | Erreichbarkeit fester IP-Adressen, ganz ohne DNS |
-| Internet | `ipv6` | IPv6 konfiguriert, aber unbrauchbar? |
+| Internet | `ipv6` | IPv6 konfiguriert, aber unbrauchbar? Zählt nur global routbare Adressen (`2000::/3`) |
 | Internet | `https` | TLS-Fehler, aufbrechender Proxy, falsche Systemzeit |
 | Internet | `captive-portal` | Hängt eine Anmeldeseite dazwischen? |
 | Namensauflösung | `dns-system` | Löst der System-Auflöser auf? |
@@ -134,6 +134,16 @@ Eine neue Prüfung ist ein Objekt in `netz/pruefungen.js` mit `id`, `titel`,
 `netz/reparaturen.js` mit `pruefen(ktx)` und `anwenden(ktx, optionen)`. Beides
 wird automatisch aufgenommen – ein Test wacht darüber, dass jede von einer
 Prüfung genannte Reparatur-ID auch existiert.
+
+### Warum nur `2000::/3` als IPv6 zählt
+
+Eine `fe80::`-Adresse (Link-Local) hat praktisch jedes Gerät, und `fc00::/7`
+(Unique Local) entspricht den privaten IPv4-Netzen. Beide kommen nie ins
+Internet. Wer sie als „IPv6 ist eingerichtet" wertet, meldet auf fast jedem
+Handy eine Störung, die keine ist – und schlägt eine Reparatur vor, die nichts
+zu reparieren hat. Als IPv6-Anbindung zählt deshalb nur der global routbare
+Bereich `2000::/3`; alles andere führt zu „übersprungen“ mit einem Hinweis,
+dass das normal ist.
 
 ## Grenzen
 

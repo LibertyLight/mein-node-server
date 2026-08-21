@@ -172,3 +172,67 @@ test('Riskante Reparaturen verlangen eine Bestätigung', () => {
     assert.equal(reparatur.bestaetigungNoetig, true, `${reparatur.id} müsste eine Bestätigung verlangen.`);
   }
 });
+
+test('istGlobalesIPv6 unterscheidet routbare von lokalen Adressen', () => {
+  const global = ['2003:a:b::1', '2606:4700:4700::1111', '3fff::1', '2000::1'];
+  const lokal = ['fe80::1', 'fe80::1%wlan0', 'fc00::1', 'fd12:3456::1', '::1', 'ff02::1', '192.168.1.1', '', null];
+
+  for (const adresse of global) {
+    assert.equal(werkzeuge.istGlobalesIPv6(adresse), true, `${adresse} sollte global sein`);
+  }
+  for (const adresse of lokal) {
+    assert.equal(werkzeuge.istGlobalesIPv6(adresse), false, `${adresse} sollte nicht global sein`);
+  }
+});
+
+test('eine reine fe80-Adresse löst keine IPv6-Warnung aus', async () => {
+  const { pruefungen: liste } = require('../netz/pruefungen');
+  const schnittstellen = liste.find((p) => p.id === 'schnittstellen');
+  const ipv6Pruefung = liste.find((p) => p.id === 'ipv6');
+
+  // Schnittstellen so vorgeben, wie ein Handy im WLAN sie meldet:
+  // eine IPv4-Adresse plus die Link-Local-Adresse, die jedes Gerät hat.
+  const echt = werkzeuge.schnittstellen;
+  werkzeuge.schnittstellen = () => [
+    { name: 'wlan0', adresse: '192.168.1.20', familie: 'IPv4', intern: false, netzmaske: '255.255.255.0' },
+    { name: 'wlan0', adresse: 'fe80::1c2b:3aff:fe4d:5e6f', familie: 'IPv6', intern: false },
+    { name: 'lo', adresse: '127.0.0.1', familie: 'IPv4', intern: true },
+  ];
+
+  try {
+    const ktx = { optionen: { port: 3000, messungen: 1 }, ergebnisse: new Map() };
+    const ergebnisSchnittstellen = await schnittstellen.ausfuehren(ktx);
+    ktx.ergebnisse.set('schnittstellen', ergebnisSchnittstellen);
+
+    assert.equal(ergebnisSchnittstellen.details.ipv6Vorhanden, false);
+    assert.equal(ergebnisSchnittstellen.details.ipv6NurLokal, true);
+
+    const ergebnisIpv6 = await ipv6Pruefung.ausfuehren(ktx);
+    assert.equal(ergebnisIpv6.status, 'uebersprungen');
+    assert.match(ergebnisIpv6.meldung, /Link-Local/);
+  } finally {
+    werkzeuge.schnittstellen = echt;
+  }
+});
+
+test('eine globale IPv6-Adresse wird weiterhin geprüft', async () => {
+  const { pruefungen: liste } = require('../netz/pruefungen');
+  const schnittstellen = liste.find((p) => p.id === 'schnittstellen');
+
+  const echt = werkzeuge.schnittstellen;
+  werkzeuge.schnittstellen = () => [
+    { name: 'wlan0', adresse: '192.168.1.20', familie: 'IPv4', intern: false, netzmaske: '255.255.255.0' },
+    { name: 'wlan0', adresse: 'fe80::1', familie: 'IPv6', intern: false },
+    { name: 'wlan0', adresse: '2003:ab:cd::42', familie: 'IPv6', intern: false },
+  ];
+
+  try {
+    const ergebnis = await schnittstellen.ausfuehren({ optionen: {}, ergebnisse: new Map() });
+    assert.equal(ergebnis.details.ipv6Vorhanden, true);
+    assert.equal(ergebnis.details.ipv6NurLokal, false);
+    assert.deepEqual(ergebnis.details.ipv6Adressen, ['2003:ab:cd::42']);
+    assert.match(ergebnis.meldung, /2003:ab:cd::42/);
+  } finally {
+    werkzeuge.schnittstellen = echt;
+  }
+});

@@ -180,6 +180,23 @@ function befehl(programm, argumente = [], zeitlimit = 4000) {
   });
 }
 
+/**
+ * Ist die Adresse global routbar (2000::/3)?
+ *
+ * Wichtig fuer die Diagnose: fe80::-Adressen (Link-Local) hat jedes Geraet,
+ * fc00::/7 (Unique Local) sind wie private IPv4-Netze. Beide kommen nie ins
+ * Internet. Wer sie als "IPv6 ist eingerichtet" wertet, meldet auf praktisch
+ * jedem Geraet eine Stoerung, die keine ist.
+ */
+function istGlobalesIPv6(adresse) {
+  if (typeof adresse !== 'string') return false;
+  const ersterBlock = adresse.split('%')[0].split(':')[0];
+  if (!/^[0-9a-fA-F]{1,4}$/.test(ersterBlock)) return false;
+
+  const wert = parseInt(ersterBlock, 16);
+  return wert >= 0x2000 && wert <= 0x3fff;
+}
+
 /** Aktive, nicht-lokale Netzwerkschnittstellen. */
 function schnittstellen() {
   const roh = os.networkInterfaces();
@@ -267,6 +284,7 @@ async function prozesseAufPort(port) {
 
 module.exports = {
   befehl,
+  istGlobalesIPv6,
   dnsAufloesung,
   dnsUeberServer,
   httpAbruf,
