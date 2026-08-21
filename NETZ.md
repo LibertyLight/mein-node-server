@@ -135,6 +135,16 @@ Eine neue Prüfung ist ein Objekt in `netz/pruefungen.js` mit `id`, `titel`,
 wird automatisch aufgenommen – ein Test wacht darüber, dass jede von einer
 Prüfung genannte Reparatur-ID auch existiert.
 
+### 6to4 wird gesondert benannt
+
+`2002::/16` sieht aus wie eine globale Adresse und ist es formal auch – nur ist
+es 6to4, ein Tunnelverfahren, das RFC 7526 für überholt erklärt hat. Die
+öffentlichen Relays dafür sind weitgehend abgeschaltet. Ein Router mit
+aktiviertem 6to4 verteilt also Adressen, die nirgends ankommen. Der Netzdoktor
+nennt in diesem Fall ausdrücklich 6to4 als Ursache und verweist auf die
+Router-Einstellung, statt nur „IPv6 nicht erreichbar“ zu melden – sonst sucht
+man an der falschen Stelle.
+
 ### Warum nur `2000::/3` als IPv6 zählt
 
 Eine `fe80::`-Adresse (Link-Local) hat praktisch jedes Gerät, und `fc00::/7`
