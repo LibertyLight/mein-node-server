@@ -180,6 +180,42 @@ function befehl(programm, argumente = [], zeitlimit = 4000) {
   });
 }
 
+/**
+ * Ist die Adresse global routbar (2000::/3)?
+ *
+ * Wichtig fuer die Diagnose: fe80::-Adressen (Link-Local) hat jedes Geraet,
+ * fc00::/7 (Unique Local) sind wie private IPv4-Netze. Beide kommen nie ins
+ * Internet. Wer sie als "IPv6 ist eingerichtet" wertet, meldet auf praktisch
+ * jedem Geraet eine Stoerung, die keine ist.
+ */
+function istGlobalesIPv6(adresse) {
+  return stufeIPv6(adresse) === 'global' || stufeIPv6(adresse) === '6to4';
+}
+
+/**
+ * Feinere Einstufung einer IPv6-Adresse.
+ *
+ * 2002::/16 verdient eine eigene Kategorie: Das ist 6to4, ein Tunnelverfahren,
+ * das RFC 7526 fuer ueberholt erklaert hat. Die oeffentlichen Relays dafuer
+ * sind groesstenteils abgeschaltet. Solche Adressen sehen global aus und sind
+ * es formal auch -- nur kommt nichts mehr an. Wer das nicht benennt, meldet
+ * "IPv6 nicht erreichbar" und laesst den Nutzer im Router nach der falschen
+ * Ursache suchen.
+ */
+function stufeIPv6(adresse) {
+  if (typeof adresse !== 'string') return 'unbekannt';
+  const ersterBlock = adresse.split('%')[0].split(':')[0];
+  if (!/^[0-9a-fA-F]{1,4}$/.test(ersterBlock)) return 'unbekannt';
+
+  const wert = parseInt(ersterBlock, 16);
+  if (wert >= 0xfe80 && wert <= 0xfebf) return 'link-local';
+  if (wert >= 0xfc00 && wert <= 0xfdff) return 'ula';
+  if (wert >= 0xff00) return 'multicast';
+  if (wert === 0x2002) return '6to4';
+  if (wert >= 0x2000 && wert <= 0x3fff) return 'global';
+  return 'unbekannt';
+}
+
 /** Aktive, nicht-lokale Netzwerkschnittstellen. */
 function schnittstellen() {
   const roh = os.networkInterfaces();
@@ -267,6 +303,8 @@ async function prozesseAufPort(port) {
 
 module.exports = {
   befehl,
+  istGlobalesIPv6,
+  stufeIPv6,
   dnsAufloesung,
   dnsUeberServer,
   httpAbruf,

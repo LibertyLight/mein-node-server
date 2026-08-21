@@ -44,6 +44,8 @@ const pruefungen = [
       const aktiv = alle.filter((s) => !s.intern);
       const ipv4 = aktiv.filter((s) => s.familie === 'IPv4');
       const ipv6 = aktiv.filter((s) => s.familie === 'IPv6');
+      const ipv6Global = ipv6.filter((s) => werkzeuge.istGlobalesIPv6(s.adresse));
+      const ipv6Nativ = ipv6Global.filter((s) => werkzeuge.stufeIPv6(s.adresse) === 'global');
 
       if (aktiv.length === 0) {
         return {
@@ -70,10 +72,20 @@ const pruefungen = [
         };
       }
 
+      const ipv6Hinweis = ipv6Global.length > 0 ? `, IPv6 ${ipv6Global[0].adresse}` : '';
       return {
         status: 'ok',
-        meldung: `${aktiv.length} aktive Adresse(n): ${ipv4.map((s) => `${s.name} ${s.adresse}`).join(', ')}`,
-        details: { schnittstellen: aktiv, ipv6Vorhanden: ipv6.length > 0 },
+        meldung: `${aktiv.length} aktive Adresse(n): ${ipv4.map((s) => `${s.name} ${s.adresse}`).join(', ')}${ipv6Hinweis}`,
+        details: {
+          schnittstellen: aktiv,
+          // Nur global routbare Adressen zählen. fe80:: hat jedes Gerät.
+          ipv6Vorhanden: ipv6Global.length > 0,
+          ipv6NurLokal: ipv6.length > 0 && ipv6Global.length === 0,
+          // Nur 6to4 und kein natives Präfix: der Router tunnelt über ein
+          // Verfahren, dessen Relays abgeschaltet sind.
+          ipv6Nur6to4: ipv6Global.length > 0 && ipv6Nativ.length === 0,
+          ipv6Adressen: ipv6Global.map((s) => s.adresse),
+        },
       };
     },
   },
@@ -291,9 +303,15 @@ const pruefungen = [
     titel: 'IPv6-Erreichbarkeit',
     gruppe: 'Internet',
     async ausfuehren(ktx) {
-      const vorhanden = ergebnis(ktx, 'schnittstellen')?.details?.ipv6Vorhanden;
-      if (!vorhanden) {
-        return { status: 'uebersprungen', meldung: 'Keine globale IPv6-Adresse vorhanden.', details: {} };
+      const schnittstellen = ergebnis(ktx, 'schnittstellen')?.details;
+      if (!schnittstellen?.ipv6Vorhanden) {
+        return {
+          status: 'uebersprungen',
+          meldung: schnittstellen?.ipv6NurLokal
+            ? 'Nur eine Link-Local-Adresse (fe80::) vorhanden – das Gerät nutzt kein IPv6 im Internet. Das ist normal und kein Fehler.'
+            : 'Keine globale IPv6-Adresse vorhanden.',
+          details: { ipv6NurLokal: Boolean(schnittstellen?.ipv6NurLokal) },
+        };
       }
 
       const treffer = await werkzeuge.tcpVerbindung(ZIELE.ipv6[0].host, ZIELE.ipv6[0].port, 4000);
@@ -304,10 +322,21 @@ const pruefungen = [
       // Der klassische Fall: IPv6-Adresse vorhanden, Route fehlt. Programme
       // waehlen dann bevorzugt IPv6 und laufen in jedes Zeitlimit.
       const ipv4Ok = ergebnis(ktx, 'internet-tcp')?.status === 'ok';
+
+      if (schnittstellen.ipv6Nur6to4) {
+        return {
+          status: ipv4Ok ? 'warnung' : 'fehler',
+          meldung:
+            'Die IPv6-Adressen stammen aus 2002::/16 – das ist 6to4, ein Tunnelverfahren, das RFC 7526 für überholt erklärt hat und dessen öffentliche Relays weitgehend abgeschaltet sind. Der Router verteilt Adressen, die nirgends ankommen. Abhilfe: im Router auf native IPv6-Anbindung umstellen.',
+          details: { ...treffer, ursache: '6to4', adressen: schnittstellen.ipv6Adressen },
+          reparaturen: ['ipv4-bevorzugen'],
+        };
+      }
+
       return {
         status: ipv4Ok ? 'warnung' : 'fehler',
         meldung: `IPv6-Adresse vorhanden, aber kein IPv6-Ziel erreichbar (${treffer.fehler}). Das bremst Verbindungen aus, die IPv6 zuerst versuchen.`,
-        details: treffer,
+        details: { ...treffer, ursache: 'unbekannt' },
         reparaturen: ['ipv4-bevorzugen'],
       };
     },
