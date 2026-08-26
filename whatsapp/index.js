@@ -35,7 +35,10 @@ function erstelle({ db, umgebung = process.env, protokoll = console } = {}) {
     };
   }
 
-  const verlauf = verlaufModul.erstelleVerlauf(db, { maxNachrichten: konfig.verlaufNachrichten });
+  const verlauf = verlaufModul.erstelleVerlauf(db, {
+    maxNachrichten: konfig.verlaufNachrichten,
+    maxBilder: konfig.bilderImVerlauf,
+  });
   verlauf.aufraeumen();
 
   const claude = claudeModul.erstelleClaude(konfig);
@@ -60,6 +63,7 @@ function erstelle({ db, umgebung = process.env, protokoll = console } = {}) {
       konfig.transkription
         ? `Sprachnachrichten: ${konfig.whisperModell} über ${konfig.whisperUrl}`
         : 'Sprachnachrichten: aus (WHISPER_API_KEY oder WHISPER_URL setzen)',
+      `Bilder: an, bis ${Math.round(konfig.maxBildBytes / (1024 * 1024))} MB, ${konfig.bilderImVerlauf} im Verlauf`,
     ],
   };
 }

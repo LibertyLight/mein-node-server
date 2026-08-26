@@ -10,6 +10,9 @@
  *
  * Sprachnachrichten nehmen denselben Weg: sie werden vorher zu Text gemacht
  * (siehe whisper.js) und sind ab da nicht mehr von getippten zu unterscheiden.
+ *
+ * Bilder gehen dagegen unveraendert an Claude -- sehen kann er selbst, dafuer
+ * braucht es keinen zweiten Dienst.
  */
 
 const nachrichtenModul = require('./nachrichten');
@@ -27,7 +30,7 @@ const HILFE = [
 ].join('\n');
 
 const NUR_TEXT =
-  'Ich kann im Moment nur Text und Sprachnachrichten lesen – Bilder, Videos und Dateien noch nicht.';
+  'Ich kann Text, Sprachnachrichten und Bilder lesen – Videos, Sticker und Dateien noch nicht.';
 const OHNE_WHISPER =
   'Sprachnachrichten kann ich gerade nicht anhören – dafür ist die Transkription nicht eingerichtet.';
 const NICHTS_GEHOERT = 'In der Sprachnachricht war für mich nichts zu verstehen.';
@@ -35,6 +38,12 @@ const AUDIO_ZU_GROSS = 'Die Sprachnachricht ist zu lang für mich. Schick sie bi
 const AUDIO_FORMAT = 'Dieses Audioformat kann ich leider nicht lesen.';
 const AUDIO_FEHLER =
   'Ich konnte die Sprachnachricht nicht verarbeiten. Versuch es bitte noch einmal – oder schreib mir.';
+const BILD_ZU_GROSS = 'Das Bild ist zu groß für mich. Schick es bitte etwas kleiner.';
+const BILD_FORMAT = 'Dieses Bildformat kann ich nicht lesen – JPEG, PNG, GIF und WebP gehen.';
+const BILD_FEHLER = 'Ich konnte das Bild nicht laden. Versuch es bitte noch einmal.';
+
+/** Formate, die Claude ansehen kann. Bewegte Bilder werden zum ersten Einzelbild. */
+const BILD_TYPEN = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 
 /** Hoechstens so viel Transkript wird der Antwort vorangestellt. */
 const TRANSKRIPT_VORSCHAU = 300;
@@ -120,9 +129,32 @@ function erstelleBot({
     }
   }
 
+  /**
+   * Bild herunterladen. Gibt null zurueck, wenn das nicht geklappt hat --
+   * der Absender hat dann bereits einen Hinweis bekommen.
+   */
+  async function holeBild(ereignis) {
+    const nummer = ereignis.von;
+
+    if (!BILD_TYPEN.has(ereignis.medien.mimeTyp)) {
+      await antworteMit(nummer, BILD_FORMAT);
+      return null;
+    }
+
+    try {
+      const bild = await medien.hole(konfig, ereignis.medien.id, { maxBytes: konfig.maxBildBytes });
+      protokoll.log(`[whatsapp] Bild ${ereignis.id} geladen (${bild.groesse} Bytes).`);
+      return bild;
+    } catch (fehler) {
+      protokoll.error(`[whatsapp] Bild ${ereignis.id} fehlgeschlagen: ${fehler.message}`);
+      await antworteMit(nummer, fehler.grund === 'zu-gross' ? BILD_ZU_GROSS : BILD_FEHLER);
+      return null;
+    }
+  }
+
   /** Claude fragen und die Antwort verschicken. */
-  async function beantworte(nummer, text, transkript) {
-    verlauf.anhaengen(nummer, 'user', text);
+  async function beantworte(nummer, text, transkript, bild = null) {
+    verlauf.anhaengen(nummer, 'user', text, bild);
 
     let antwort;
     try {
@@ -147,11 +179,21 @@ function erstelleBot({
     const nummer = ereignis.von;
     let text = ereignis.text;
     let transkript = null;
+    let bild = null;
 
     if (ereignis.typ === 'audio' && ereignis.medien) {
       transkript = await transkribiere(ereignis);
       if (!transkript) return;
       text = transkript;
+    }
+
+    // Steht in der Bildunterschrift ein Befehl, ist das Bild nicht gemeint --
+    // dann gar nicht erst herunterladen.
+    if (ereignis.typ === 'image' && ereignis.medien && !nachrichtenModul.erkenneBefehl(text)) {
+      bild = await holeBild(ereignis);
+      if (!bild) return;
+      // Ein Bild ohne Bildunterschrift ist als Frage gemeint.
+      text = text || konfig.bildFrage;
     }
 
     if (!text) {
@@ -170,7 +212,7 @@ function erstelleBot({
       return;
     }
 
-    await beantworte(nummer, text, transkript);
+    await beantworte(nummer, text, transkript, bild);
   }
 
   /** Eine einzelne Nachricht bearbeiten -- mit allen Vorpruefungen. */
@@ -225,8 +267,12 @@ function erstelleBot({
 module.exports = {
   erstelleBot,
   transkriptZeile,
+  BILD_TYPEN,
   HILFE,
   NUR_TEXT,
+  BILD_ZU_GROSS,
+  BILD_FORMAT,
+  BILD_FEHLER,
   OHNE_WHISPER,
   NICHTS_GEHOERT,
   AUDIO_ZU_GROSS,

@@ -4,7 +4,7 @@ Ein Webhook, der eingehende WhatsApp-Nachrichten an Claude weiterreicht und die
 Antwort zurückschickt – mit Gesprächsverlauf, sodass Rückfragen wie „und was
 war das erste noch mal?“ funktionieren. Sprachnachrichten werden vorher per
 Whisper transkribiert; ab dann sind sie nicht mehr von getippten zu
-unterscheiden.
+unterscheiden. Bilder gehen unverändert mit – die sieht Claude selbst.
 
 Der Bot hängt als Router in `app.js`. Als zusätzliche Abhängigkeit kommt nur das
 offizielle Anthropic-SDK dazu; Datenbank (`node:sqlite`) und HTTP-Aufrufe
@@ -17,6 +17,7 @@ WhatsApp-App  →  Meta Cloud API  →  POST /whatsapp/webhook  →  Claude
                                  ←  Graph-API-Aufruf        ←  Antwort
 
 Sprachnachricht:  Medien-ID  →  Datei von Meta holen  →  Whisper  →  Text  ↑
+Bild:             Medien-ID  →  Datei von Meta holen  →  als Bildblock  ────↑
 ```
 
 Meta erwartet auf den Webhook innerhalb weniger Sekunden ein `200`. Claude
@@ -67,6 +68,9 @@ Freiwillig:
 | `WHISPER_MODELL` | `whisper-1` | Transkriptionsmodell |
 | `WHISPER_SPRACHE` | – | z. B. `de`; leer heißt automatisch erkennen |
 | `WHATSAPP_MAX_AUDIO_MB` | `20` | Obergrenze je Sprachnachricht |
+| `WHATSAPP_MAX_BILD_MB` | `5` | Obergrenze je Bild |
+| `WHATSAPP_BILDER_IM_VERLAUF` | `2` | wie viele Bilder bei jeder Anfrage mitgehen |
+| `WHATSAPP_BILD_FRAGE` | „Was ist auf diesem Bild zu sehen?“ | Frage bei Bildern ohne Unterschrift |
 | `WHATSAPP_TRANSKRIPT_ZEIGEN` | `1` | `0` blendet das Transkript über der Antwort aus |
 
 Anders als der Rest des Repos liegt das Anthropic-SDK nicht mit in
@@ -113,8 +117,8 @@ Einfach schreiben. Zusätzlich versteht der Bot:
 | `/neu` | Gesprächsverlauf vergessen und neu anfangen |
 | `/hilfe` | Kurzübersicht |
 
-Sprachnachrichten versteht er ebenfalls (siehe unten). Bilder, Videos und
-Dateien beantwortet er mit einem Hinweis.
+Sprachnachrichten und Bilder versteht er ebenfalls (siehe unten). Videos,
+Sticker und Dateien beantwortet er mit einem Hinweis.
 
 ## Sprachnachrichten
 
@@ -150,6 +154,33 @@ export WHISPER_URL="http://127.0.0.1:8080/v1"
 
 Einen Schlüssel braucht ein lokaler Server in der Regel nicht; der Bot lässt
 den Kopf dann weg. So verlässt keine Aufnahme das eigene Netz.
+
+## Bilder
+
+Bilder brauchen keine Einrichtung und keinen zweiten Dienst: Claude sieht sie
+selbst. Der Weg ist derselbe wie bei Sprachnachrichten – Medien-ID, Metadaten,
+Datei –, nur geht die Datei danach unverändert als Bildblock an die API,
+**vor** dem Text: so liest Claude sie am besten.
+
+Die Bildunterschrift ist die Frage. Fehlt sie, fragt der Bot von sich aus
+„Was ist auf diesem Bild zu sehen?“ (`WHATSAPP_BILD_FRAGE`). Steht in der
+Unterschrift ein Befehl wie `/neu`, ist das Bild nicht gemeint – dann wird es
+gar nicht erst heruntergeladen.
+
+Lesbar sind JPEG, PNG, GIF und WebP. Bewegte Bilder werden zum ersten
+Einzelbild; andere Formate meldet der Bot verständlich zurück.
+
+### Warum nicht jedes Bild ewig mitgeht
+
+Die Messages-API ist zustandslos: bei jeder Anfrage geht der ganze Verlauf mit,
+Bilder eingeschlossen – und jedes Bild kostet jedes Mal aufs Neue. Deshalb
+tragen nur die jüngsten Bilder (`WHATSAPP_BILDER_IM_VERLAUF`, Vorgabe 2) ihre
+Daten wirklich mit; ältere schrumpfen im Verlauf auf `[Bild]` samt Unterschrift.
+Rückfragen zum gerade geschickten Bild funktionieren also, das Bild von vorletzter
+Woche belastet aber keine Rechnung mehr.
+
+Die Bilder liegen als BLOB in `wa_verlauf`. Wer den Verlauf mit `/neu` löscht,
+wird sie mit los.
 
 ## Endpunkte
 
@@ -192,7 +223,7 @@ API-Schlüssel, der Geld kostet, und ein Modell, das auf alles antwortet. Deshal
 | `whatsapp/nachrichten.js` | Signatur, Webhook-Format, Befehle, Textaufteilung |
 | `whatsapp/verlauf.js` | Gesprächsverlauf und Doppel-Erkennung in SQLite |
 | `whatsapp/claude.js` | Anfrage an die Messages-API, Auswertung der Antwort |
-| `whatsapp/medien.js` | Sprachnachrichten von Meta herunterladen |
+| `whatsapp/medien.js` | Sprachnachrichten und Bilder von Meta herunterladen |
 | `whatsapp/whisper.js` | Transkription über die Whisper-Schnittstelle |
 | `whatsapp/versand.js` | Graph-API-Aufrufe inklusive Wiederholung |
 | `whatsapp/bot.js` | Ablauf: Nachricht → Verlauf → Claude → Antwort |
@@ -216,8 +247,8 @@ Nummer deshalb hintereinander auf; verschiedene Absender laufen weiter parallel.
   Nutzer innerhalb der letzten 24 Stunden geschrieben hat. Danach gehen nur noch
   genehmigte Vorlagen durch. Für einen Bot, den man selbst anschreibt, spielt
   das keine Rolle.
-- **Text und Sprache.** Bilder, Videos und Dokumente werden erkannt, aber nicht
-  ausgewertet.
+- **Text, Sprache, Bilder.** Videos, Sticker und Dokumente werden erkannt, aber
+  nicht ausgewertet.
 - **Zweiter Dienst für Sprache.** Claude selbst hört nichts – ohne Whisper
   bleiben Sprachnachrichten unbeantwortet. Beim gehosteten Dienst verlässt die
   Aufnahme das eigene Netz; wem das nicht passt, der setzt `WHISPER_URL` auf
@@ -226,4 +257,5 @@ Nummer deshalb hintereinander auf; verschiedene Absender laufen weiter parallel.
   Instanzen hinter einem Lastverteiler teilen ihn sich nicht.
 - **Kosten.** Jede Nachricht ist ein API-Aufruf mit dem gesamten mitgeschickten
   Verlauf. `WHATSAPP_VERLAUF_NACHRICHTEN` begrenzt, wie teuer eine einzelne
-  Anfrage werden kann; Sprachnachrichten kosten zusätzlich die Transkription.
+  Anfrage werden kann; Sprachnachrichten kosten zusätzlich die Transkription,
+  Bilder je nach Größe ein Vielfaches einer Textnachricht.
