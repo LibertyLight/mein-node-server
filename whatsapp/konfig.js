@@ -14,6 +14,9 @@ const VORGABEN = {
   aufwand: 'medium',
   maxTokens: 8000,
   verlaufNachrichten: 20,
+  whisperUrl: 'https://api.openai.com/v1',
+  whisperModell: 'whisper-1',
+  maxAudioMB: 20,
   systemPrompt: [
     'Du bist Claude und antwortest über WhatsApp.',
     'Fasse dich kurz: eine WhatsApp-Nachricht fasst höchstens 4096 Zeichen.',
@@ -58,6 +61,17 @@ function lade(umgebung = process.env) {
     maxTokens: zahl(umgebung.CLAUDE_MAX_TOKENS, VORGABEN.maxTokens),
     verlaufNachrichten: zahl(umgebung.WHATSAPP_VERLAUF_NACHRICHTEN, VORGABEN.verlaufNachrichten),
     systemPrompt: umgebung.CLAUDE_SYSTEM_PROMPT || VORGABEN.systemPrompt,
+
+    // Sprachnachrichten sind freiwillig: ohne Whisper laeuft der Rest weiter.
+    // Ein lokaler Whisper-Server braucht keinen Schluessel, deshalb genuegt
+    // eine der beiden Angaben, um die Transkription einzuschalten.
+    transkription: Boolean(umgebung.WHISPER_API_KEY || umgebung.WHISPER_URL),
+    whisperUrl: umgebung.WHISPER_URL || VORGABEN.whisperUrl,
+    whisperSchluessel: umgebung.WHISPER_API_KEY || '',
+    whisperModell: umgebung.WHISPER_MODELL || VORGABEN.whisperModell,
+    whisperSprache: umgebung.WHISPER_SPRACHE || '',
+    maxAudioBytes: zahl(umgebung.WHATSAPP_MAX_AUDIO_MB, VORGABEN.maxAudioMB) * 1024 * 1024,
+    transkriptZeigen: umgebung.WHATSAPP_TRANSKRIPT_ZEIGEN !== '0',
   };
 }
 

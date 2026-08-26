@@ -20,6 +20,8 @@ const verlaufModul = require('../whatsapp/verlauf');
 const botModul = require('../whatsapp/bot');
 const routenModul = require('../whatsapp/routen');
 const claudeModul = require('../whatsapp/claude');
+const medienModul = require('../whatsapp/medien');
+const whisperModul = require('../whatsapp/whisper');
 
 const GEHEIMNIS = 'app-geheimnis';
 
@@ -35,16 +37,30 @@ function testKonfig(zusatz = {}) {
   });
 }
 
-function webhookKoerper(text, { id = 'wamid.1', von = '491701234567', typ = 'text' } = {}) {
+function webhookKoerper(text, { id = 'wamid.1', von = '491701234567', typ = 'text', medien = null } = {}) {
   const nachricht = { id, from: von, type: typ, timestamp: String(Math.floor(Date.now() / 1000)) };
   if (typ === 'text') nachricht.text = { body: text };
+  if (medien) nachricht[typ] = { id: 'MEDIA1', mime_type: 'audio/ogg; codecs=opus', voice: true, ...medien };
   return { object: 'whatsapp_business_account', entry: [{ changes: [{ value: { messages: [nachricht] } }] }] };
 }
 
+/** Sprachnachricht als Webhook-Körper. */
+function sprachKoerper(optionen = {}) {
+  return webhookKoerper(null, { typ: 'audio', medien: {}, ...optionen });
+}
+
 /** Bot mit Attrappen fuer Claude und Versand. */
-function testBot({ antwort = 'Antwort von Claude', fehler = null, konfig = testKonfig() } = {}) {
+function testBot({
+  antwort = 'Antwort von Claude',
+  fehler = null,
+  konfig = testKonfig(),
+  transkript = null,
+  transkriptFehler = null,
+  medienFehler = null,
+} = {}) {
   const gesendet = [];
   const gesehen = [];
+  const gehoert = [];
   const verlauf = verlaufModul.erstelleVerlauf(new DatabaseSync(':memory:'), { maxNachrichten: 10 });
 
   const claude = {
@@ -62,9 +78,28 @@ function testBot({ antwort = 'Antwort von Claude', fehler = null, konfig = testK
     markiereGelesen: async () => {},
   };
 
+  // Sprachnachrichten: nur eingehängt, wenn der Test eins davon braucht.
+  const whisper =
+    transkript === null && !transkriptFehler
+      ? null
+      : {
+          transkribiere: async (datei) => {
+            gehoert.push(datei);
+            if (transkriptFehler) throw transkriptFehler;
+            return transkript;
+          },
+        };
+
+  const medien = {
+    hole: async () => {
+      if (medienFehler) throw medienFehler;
+      return { daten: Buffer.from('audio'), mimeTyp: 'audio/ogg', groesse: 5 };
+    },
+  };
+
   const still = { log() {}, warn() {}, error() {} };
-  const bot = botModul.erstelleBot({ konfig, verlauf, claude, versand, protokoll: still });
-  return { bot, verlauf, gesendet, gesehen, konfig };
+  const bot = botModul.erstelleBot({ konfig, verlauf, claude, whisper, medien, versand, protokoll: still });
+  return { bot, verlauf, gesendet, gesehen, gehoert, konfig };
 }
 
 // --- Konfiguration -------------------------------------------------------
@@ -125,7 +160,7 @@ test('Nachrichten werden aus dem verschachtelten Webhook geschält', () => {
   const ereignisse = nachrichten.extrahiereEreignisse(koerper);
   assert.strictEqual(ereignisse.length, 2);
   assert.deepStrictEqual(ereignisse[0], {
-    id: 'a', von: '4917', name: 'Eric', typ: 'text', text: 'Hallo', zeitstempel: 1700000000,
+    id: 'a', von: '4917', name: 'Eric', typ: 'text', text: 'Hallo', medien: null, zeitstempel: 1700000000,
   });
   assert.strictEqual(ereignisse[1].text, '');
 });
@@ -266,9 +301,9 @@ test('/hilfe beantwortet der Bot selbst, ohne Claude zu fragen', async () => {
   assert.match(gesendet[0].text, /Befehle/);
 });
 
-test('Sprachnachrichten und Bilder bekommen einen Hinweis', async () => {
+test('Bilder und Dateien bekommen einen Hinweis', async () => {
   const { bot, gesendet, gesehen } = testBot();
-  await bot.verarbeiteKoerper(webhookKoerper(null, { typ: 'audio' }));
+  await bot.verarbeiteKoerper(webhookKoerper(null, { typ: 'image' }));
 
   assert.strictEqual(gesehen.length, 0);
   assert.strictEqual(gesendet[0].text, botModul.NUR_TEXT);
@@ -303,6 +338,220 @@ test('schnell aufeinander folgende Nachrichten werden nacheinander bearbeitet', 
   assert.deepStrictEqual(gesehen[1].map((n) => n.content), [
     'erste', 'Antwort auf erste', 'zweite',
   ]);
+});
+
+// --- Sprachnachrichten ---------------------------------------------------
+
+test('die Medienangaben einer Sprachnachricht werden mitgelesen', () => {
+  const [ereignis] = nachrichten.extrahiereEreignisse(sprachKoerper());
+
+  assert.strictEqual(ereignis.typ, 'audio');
+  // Der Webhook liefert nur die ID; die Datei wird getrennt abgeholt.
+  assert.deepStrictEqual(ereignis.medien, { id: 'MEDIA1', mimeTyp: 'audio/ogg', stimme: true });
+});
+
+test('Medien werden in zwei Schritten und jeweils mit Token geholt', async () => {
+  const aufrufe = [];
+  const fetchImpl = async (url, opt) => {
+    aufrufe.push({ url, autorisierung: opt.headers.Authorization });
+    if (aufrufe.length === 1) {
+      return {
+        ok: true,
+        json: async () => ({ url: 'https://lookaside.fbsbx.com/datei', mime_type: 'audio/ogg; codecs=opus', file_size: 5 }),
+      };
+    }
+    return { ok: true, arrayBuffer: async () => Buffer.from('audio') };
+  };
+
+  const datei = await medienModul.hole(testKonfig(), 'MEDIA1', { fetchImpl });
+
+  assert.strictEqual(aufrufe.length, 2);
+  assert.match(aufrufe[0].url, /graph\.facebook\.com\/v23\.0\/MEDIA1$/);
+  assert.strictEqual(aufrufe[1].url, 'https://lookaside.fbsbx.com/datei');
+  // Auch die Datei-Adresse verlangt den Token -- sie allein genügt nicht.
+  for (const aufruf of aufrufe) assert.strictEqual(aufruf.autorisierung, 'Bearer token');
+  assert.deepStrictEqual(datei, { daten: Buffer.from('audio'), mimeTyp: 'audio/ogg', groesse: 5 });
+});
+
+test('zu große Dateien werden vor dem Herunterladen abgelehnt', async () => {
+  let dateiAbgerufen = false;
+  const fetchImpl = async (url) => {
+    if (url.includes('graph.facebook.com')) {
+      return { ok: true, json: async () => ({ url: 'https://lookaside.fbsbx.com/datei', mime_type: 'audio/ogg', file_size: 99_000_000 }) };
+    }
+    dateiAbgerufen = true;
+    return { ok: true, arrayBuffer: async () => Buffer.alloc(0) };
+  };
+
+  await assert.rejects(
+    () => medienModul.hole(testKonfig(), 'MEDIA1', { fetchImpl, maxBytes: 1024 }),
+    (fehler) => fehler.grund === 'zu-gross',
+  );
+  assert.strictEqual(dateiAbgerufen, false);
+});
+
+test('auch eine falsch angegebene Dateigröße fliegt auf', async () => {
+  const fetchImpl = async (url) => {
+    if (url.includes('graph.facebook.com')) {
+      // file_size behauptet 5 Bytes, geliefert werden 4096.
+      return { ok: true, json: async () => ({ url: 'https://lookaside.fbsbx.com/datei', mime_type: 'audio/ogg', file_size: 5 }) };
+    }
+    return { ok: true, arrayBuffer: async () => Buffer.alloc(4096) };
+  };
+
+  await assert.rejects(
+    () => medienModul.hole(testKonfig(), 'MEDIA1', { fetchImpl, maxBytes: 1024 }),
+    (fehler) => fehler.grund === 'zu-gross',
+  );
+});
+
+test('Whisper bekommt Datei, Modell und Sprache als Formular', async () => {
+  let aufruf = null;
+  const fetchImpl = async (url, opt) => {
+    aufruf = { url, opt };
+    return { ok: true, json: async () => ({ text: '  Wie wird das Wetter morgen?  ' }) };
+  };
+
+  const konfig = testKonfig({ WHISPER_API_KEY: 'sk-whisper', WHISPER_SPRACHE: 'de' });
+  const whisper = whisperModul.erstelleWhisper(konfig, { fetchImpl });
+  const text = await whisper.transkribiere({ daten: Buffer.from('audio'), mimeTyp: 'audio/ogg' });
+
+  assert.strictEqual(text, 'Wie wird das Wetter morgen?');
+  assert.strictEqual(aufruf.url, 'https://api.openai.com/v1/audio/transcriptions');
+  assert.strictEqual(aufruf.opt.headers.Authorization, 'Bearer sk-whisper');
+  assert.strictEqual(aufruf.opt.body.get('model'), 'whisper-1');
+  assert.strictEqual(aufruf.opt.body.get('language'), 'de');
+  // Die Schnittstelle erkennt das Format an der Endung, nicht am MIME-Typ.
+  assert.strictEqual(aufruf.opt.body.get('file').name, 'sprachnachricht.ogg');
+});
+
+test('ein lokaler Whisper-Server wird ohne Schlüssel angesprochen', async () => {
+  let aufruf = null;
+  const fetchImpl = async (url, opt) => {
+    aufruf = { url, opt };
+    return { ok: true, json: async () => ({ text: 'lokal verstanden' }) };
+  };
+
+  const konfig = testKonfig({ WHISPER_URL: 'http://127.0.0.1:8080/v1/' });
+  const whisper = whisperModul.erstelleWhisper(konfig, { fetchImpl });
+
+  assert.strictEqual(await whisper.transkribiere({ daten: Buffer.from('x'), mimeTyp: 'audio/ogg' }), 'lokal verstanden');
+  assert.strictEqual(aufruf.url, 'http://127.0.0.1:8080/v1/audio/transcriptions');
+  assert.strictEqual(aufruf.opt.headers.Authorization, undefined);
+});
+
+test('unlesbare Formate und Dienstfehler werden unterschieden', async () => {
+  const konfig = testKonfig({ WHISPER_API_KEY: 'sk-whisper' });
+
+  const nieAufgerufen = whisperModul.erstelleWhisper(konfig, {
+    fetchImpl: async () => assert.fail('bei unbekanntem Format darf gar nicht erst gefragt werden'),
+  });
+  await assert.rejects(
+    () => nieAufgerufen.transkribiere({ daten: Buffer.from('x'), mimeTyp: 'audio/amr' }),
+    (fehler) => fehler.grund === 'format',
+  );
+
+  const kaputt = whisperModul.erstelleWhisper(konfig, {
+    fetchImpl: async () => ({ ok: false, status: 500, text: async () => 'serverfehler' }),
+  });
+  await assert.rejects(
+    () => kaputt.transkribiere({ daten: Buffer.from('x'), mimeTyp: 'audio/ogg' }),
+    (fehler) => fehler.grund === 'dienst',
+  );
+});
+
+test('eine Sprachnachricht wird transkribiert, beantwortet und gemerkt', async () => {
+  const { bot, verlauf, gesendet, gesehen, gehoert } = testBot({
+    transkript: 'Wie wird das Wetter morgen?',
+    antwort: 'Morgen bleibt es trocken.',
+  });
+
+  const ergebnis = await bot.verarbeiteKoerper(sprachKoerper());
+
+  assert.deepStrictEqual(ergebnis, ['beantwortet']);
+  assert.strictEqual(gehoert.length, 1);
+  // Claude sieht das Transkript wie eine getippte Nachricht.
+  assert.deepStrictEqual(gesehen[0], [{ role: 'user', content: 'Wie wird das Wetter morgen?' }]);
+  assert.strictEqual(gesendet[0].text, '🎙 _Wie wird das Wetter morgen?_\n\nMorgen bleibt es trocken.');
+  assert.deepStrictEqual(verlauf.holen('491701234567'), [
+    { role: 'user', content: 'Wie wird das Wetter morgen?' },
+    { role: 'assistant', content: 'Morgen bleibt es trocken.' },
+  ]);
+});
+
+test('Rückfragen nach einer Sprachnachricht kennen den Verlauf', async () => {
+  const { bot, gesehen } = testBot({ transkript: 'Merk dir die Zahl sieben.' });
+
+  await bot.verarbeiteKoerper(sprachKoerper({ id: 'wamid.1' }));
+  await bot.verarbeiteKoerper(webhookKoerper('Welche Zahl war das?', { id: 'wamid.2' }));
+
+  assert.deepStrictEqual(gesehen[1].map((n) => n.content), [
+    'Merk dir die Zahl sieben.',
+    'Antwort von Claude',
+    'Welche Zahl war das?',
+  ]);
+});
+
+test('ohne eingerichtete Transkription gibt es einen Hinweis statt einer Antwort', async () => {
+  const { bot, gesendet, gesehen } = testBot();
+  await bot.verarbeiteKoerper(sprachKoerper());
+
+  assert.strictEqual(gesehen.length, 0);
+  assert.strictEqual(gesendet[0].text, botModul.OHNE_WHISPER);
+});
+
+test('eine stille Aufnahme wird nicht an Claude weitergereicht', async () => {
+  const { bot, gesendet, gesehen } = testBot({ transkript: '   ' });
+  await bot.verarbeiteKoerper(sprachKoerper());
+
+  assert.strictEqual(gesehen.length, 0);
+  assert.strictEqual(gesendet[0].text, botModul.NICHTS_GEHOERT);
+});
+
+test('Probleme beim Transkribieren werden nach Grund erklärt', async () => {
+  const zuGross = new medienModul.MedienFehler('zu groß', 'zu-gross');
+  const einer = testBot({ transkript: 'egal', medienFehler: zuGross });
+  await einer.bot.verarbeiteKoerper(sprachKoerper());
+  assert.strictEqual(einer.gesendet[0].text, botModul.AUDIO_ZU_GROSS);
+
+  const format = new whisperModul.WhisperFehler('audio/amr', 'format');
+  const zweiter = testBot({ transkript: 'egal', transkriptFehler: format });
+  await zweiter.bot.verarbeiteKoerper(sprachKoerper());
+  assert.strictEqual(zweiter.gesendet[0].text, botModul.AUDIO_FORMAT);
+
+  const dienst = new whisperModul.WhisperFehler('500', 'dienst');
+  const dritter = testBot({ transkript: 'egal', transkriptFehler: dienst });
+  await dritter.bot.verarbeiteKoerper(sprachKoerper());
+  assert.strictEqual(dritter.gesendet[0].text, botModul.AUDIO_FEHLER);
+  // Ohne Transkript darf Claude gar nicht erst gefragt werden.
+  assert.strictEqual(dritter.gesehen.length, 0);
+});
+
+test('gesprochene Befehle wirken wie getippte', async () => {
+  const { bot, verlauf, gesendet } = testBot({ transkript: '/neu' });
+
+  await bot.verarbeiteKoerper(webhookKoerper('Merk dir: blau', { id: 'wamid.1' }));
+  await bot.verarbeiteKoerper(sprachKoerper({ id: 'wamid.2' }));
+
+  assert.deepStrictEqual(verlauf.holen('491701234567'), []);
+  assert.match(gesendet[1].text, /vergessen/);
+});
+
+test('das vorangestellte Transkript lässt sich abschalten', async () => {
+  const konfig = testKonfig({ WHATSAPP_TRANSKRIPT_ZEIGEN: '0' });
+  const { bot, gesendet } = testBot({ konfig, transkript: 'Hallo Claude' });
+
+  await bot.verarbeiteKoerper(sprachKoerper());
+  assert.strictEqual(gesendet[0].text, 'Antwort von Claude');
+});
+
+test('sehr lange Transkripte werden in der Vorschau gekürzt', () => {
+  const zeile = botModul.transkriptZeile(`${'sehr langes Gerede. '.repeat(50)}\nmit Umbruch`);
+
+  assert.ok(zeile.startsWith('🎙 _'));
+  assert.ok(zeile.endsWith('…_'));
+  assert.ok(zeile.length < 320);
+  assert.ok(!zeile.includes('\n'));
 });
 
 // --- Antwortauswertung ---------------------------------------------------

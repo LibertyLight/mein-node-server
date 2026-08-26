@@ -27,6 +27,9 @@ async function haupt() {
   console.log(
     `  Freigegebene Nummern: ${konfig.alleErlaubt ? 'alle' : konfig.erlaubteNummern.join(', ') || '(keine)'}`,
   );
+  console.log(
+    `  Sprachnachrichten:   ${konfig.transkription ? `${konfig.whisperModell} über ${konfig.whisperUrl}` : 'aus'}`,
+  );
 
   if (fehlt.length > 0) {
     console.error(`\nEs fehlen: ${fehlt.join(', ')}`);
