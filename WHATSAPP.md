@@ -59,9 +59,14 @@ Freiwillig:
 | `WHATSAPP_VERLAUF_NACHRICHTEN` | `20` | wie viele Nachrichten Claude je Anfrage sieht |
 | `WHATSAPP_GRAPH_VERSION` | `v23.0` | Version der Graph-API |
 
+Anders als der Rest des Repos liegt das Anthropic-SDK nicht mit in
+`node_modules` – nach dem Auschecken einmal `npm install` ausführen, sonst
+fehlt `@anthropic-ai/sdk` und auch die Tests laufen nicht.
+
 Danach prüfen, ohne aufs Handy zu warten:
 
 ```bash
+npm install                              # einmalig, zieht @anthropic-ai/sdk nach
 npm run whatsapp:pruefen                 # Konfiguration + Claude-Verbindung
 npm run whatsapp:pruefen -- 491701234567 # zusätzlich eine Testnachricht schicken
 npm run start:app
