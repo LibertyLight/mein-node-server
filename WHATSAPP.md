@@ -89,6 +89,56 @@ npm run start:app
 Beim Start meldet der Server, ob der Bot aktiv ist – und andernfalls, welche
 Variable fehlt.
 
+### Dauerhaft unter Termux
+
+Ein `export` gilt nur für die laufende Sitzung: nach dem nächsten Start von
+Termux sind die Werte weg und der Bot meldet wieder, dass alles fehlt. Damit
+sie bleiben, gehören sie in eine Datei, die beim Öffnen der Shell gelesen wird.
+
+Nicht direkt in die `~/.bashrc` – Zugangsdaten haben in der Shell-Konfiguration
+nichts verloren und lassen sich dort auch schlechter austauschen. Besser eine
+eigene Datei, die nur dir gehört:
+
+```bash
+cat > ~/.whatsapp-env <<'EOF'
+export ANTHROPIC_API_KEY="hier-einsetzen"
+export WHATSAPP_TOKEN="hier-einsetzen"
+export WHATSAPP_TELEFON_ID="hier-einsetzen"
+export WHATSAPP_PRUEF_TOKEN="hier-einsetzen"
+export WHATSAPP_APP_GEHEIMNIS="hier-einsetzen"
+export WHATSAPP_ERLAUBTE_NUMMERN="491701234567"
+export WHISPER_API_KEY="hier-einsetzen"
+EOF
+
+chmod 600 ~/.whatsapp-env     # nur für den eigenen Benutzer lesbar
+nano ~/.whatsapp-env          # echte Werte eintragen; falls nano fehlt: pkg install nano
+```
+
+Einen Prüf-Token denkst du dir selbst aus – ohne Zusatzpaket geht das so:
+
+```bash
+head -c 24 /dev/urandom | base64
+```
+
+Dann einmalig einhängen:
+
+```bash
+grep -q whatsapp-env ~/.bashrc || echo '[ -f ~/.whatsapp-env ] && . ~/.whatsapp-env' >> ~/.bashrc
+. ~/.whatsapp-env             # für die laufende Sitzung sofort aktiv
+```
+
+Ab dem nächsten Start passiert das von allein. Prüfen:
+
+```bash
+cd ~/mein-node-server         # dort, wohin du geklont hast
+npm run whatsapp:pruefen
+```
+
+Läuft der Befehl mit „fatal: not a git repository“ oder „Could not read
+package.json“ auf, stehst du im falschen Verzeichnis – das sind die Meldungen
+aus dem Termux-Home. `find ~ -maxdepth 3 -name package.json` findet den
+Projektordner wieder.
+
 ## Webhook eintragen
 
 Meta ruft den Webhook über HTTPS auf, also braucht der Server eine öffentliche
