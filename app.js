@@ -2,6 +2,7 @@ const express = require('express');
 const { DatabaseSync } = require('node:sqlite');
 const netzRouten = require('./netz/routen');
 const netzKonfig = require('./netz/konfig');
+const whatsapp = require('./whatsapp');
 
 const app = express();
 const PORT = 3000;
@@ -17,6 +18,17 @@ db.exec(`
     erstellt_am TEXT NOT NULL
   )
 `);
+
+// WhatsApp-Bot: muss VOR express.json() stehen. Die Signaturpruefung von Meta
+// braucht den unveraenderten Anfragekoerper, den ein globaler JSON-Parser
+// bereits aufgeloest haette. Einrichtung: siehe WHATSAPP.md
+const whatsappBot = whatsapp.erstelle({ db });
+for (const hinweis of whatsappBot.hinweise) {
+  console.log(`[whatsapp] ${hinweis}`);
+}
+if (whatsappBot.router) {
+  app.use('/whatsapp', whatsappBot.router);
+}
 
 app.use(express.json());
 app.use(express.static('public'));
@@ -62,6 +74,9 @@ app.delete('/api/nachrichten/:id', (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server läuft mit nativer SQLite auf http://localhost:${PORT}`);
   console.log(`Netzdoktor-Dashboard: http://localhost:${PORT}/netz.html`);
+  if (whatsappBot.aktiv) {
+    console.log(`WhatsApp-Webhook: http://localhost:${PORT}/whatsapp/webhook`);
+  }
 });
 
 

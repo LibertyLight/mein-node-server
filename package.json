@@ -10,13 +10,15 @@
     "netz": "node netz/cli.js",
     "netz:json": "node netz/cli.js analyse --json",
     "netz:reparieren": "node netz/cli.js reparieren",
-    "netz:beobachten": "node netz/cli.js beobachten"
+    "netz:beobachten": "node netz/cli.js beobachten",
+    "whatsapp:pruefen": "node whatsapp/pruefen.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.121.0",
     "better-sqlite3": "^13.0.3",
     "express": "^5.2.1"
   },
