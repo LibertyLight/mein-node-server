@@ -14,6 +14,7 @@ const konfigModul = require('./konfig');
 const nachrichtenModul = require('./nachrichten');
 const verlaufModul = require('./verlauf');
 const claudeModul = require('./claude');
+const whisperModul = require('./whisper');
 const botModul = require('./bot');
 const routenModul = require('./routen');
 
@@ -38,7 +39,10 @@ function erstelle({ db, umgebung = process.env, protokoll = console } = {}) {
   verlauf.aufraeumen();
 
   const claude = claudeModul.erstelleClaude(konfig);
-  const bot = botModul.erstelleBot({ konfig, verlauf, claude, protokoll });
+  // Ohne Whisper laeuft alles weiter -- nur Sprachnachrichten bekommen dann
+  // statt einer Antwort einen Hinweis.
+  const whisper = konfig.transkription ? whisperModul.erstelleWhisper(konfig) : null;
+  const bot = botModul.erstelleBot({ konfig, verlauf, claude, whisper, protokoll });
   const router = routenModul.erstelleRouter({ konfig, bot, protokoll });
 
   return {
@@ -46,12 +50,16 @@ function erstelle({ db, umgebung = process.env, protokoll = console } = {}) {
     konfig,
     verlauf,
     bot,
+    whisper,
     router,
     hinweise: [
       `aktiv mit Modell ${konfig.modell} (Aufwand: ${konfig.aufwand})`,
       konfig.alleErlaubt
         ? 'ACHTUNG: alle Absender sind freigegeben (WHATSAPP_ERLAUBTE_NUMMERN=alle)'
         : `freigegebene Nummern: ${konfig.erlaubteNummern.length}`,
+      konfig.transkription
+        ? `Sprachnachrichten: ${konfig.whisperModell} über ${konfig.whisperUrl}`
+        : 'Sprachnachrichten: aus (WHISPER_API_KEY oder WHISPER_URL setzen)',
     ],
   };
 }

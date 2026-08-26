@@ -83,6 +83,9 @@ function erstelleRouter({ konfig, bot, protokoll = console }) {
       aufwand: konfig.aufwand,
       graphVersion: konfig.graphVersion,
       verlaufNachrichten: konfig.verlaufNachrichten,
+      sprachnachrichten: konfig.transkription
+        ? { modell: konfig.whisperModell, dienst: konfig.whisperUrl }
+        : false,
       freigegebeneNummern: konfig.alleErlaubt ? 'alle' : konfig.erlaubteNummern.length,
       fehlendeAngaben: konfigModul.fehlendeAngaben(konfig),
     });

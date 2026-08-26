@@ -49,6 +49,22 @@ function leseText(nachricht) {
 }
 
 /**
+ * Angehaengte Datei einer Nachricht. Der Webhook liefert nur eine ID, die
+ * eigentliche Datei muss getrennt abgeholt werden (siehe medien.js).
+ */
+function leseMedien(nachricht) {
+  const daten = nachricht[nachricht.type];
+  if (!daten || typeof daten !== 'object' || !daten.id) return null;
+
+  return {
+    id: daten.id,
+    mimeTyp: String(daten.mime_type || '').split(';')[0].trim(),
+    // true bei einer aufgenommenen Sprachnachricht, false bei angehaengter Musik.
+    stimme: Boolean(daten.voice),
+  };
+}
+
+/**
  * Aus dem verschachtelten Webhook-Koerper die einzelnen Nachrichten schaelen.
  *
  * Meta bündelt mehrere Ereignisse in einem Aufruf und schickt auch reine
@@ -73,6 +89,7 @@ function extrahiereEreignisse(koerper) {
           name: namen.get(nachricht.from) || null,
           typ: nachricht.type || 'unbekannt',
           text: leseText(nachricht),
+          medien: leseMedien(nachricht),
           zeitstempel: Number(nachricht.timestamp) || null,
         });
       }
@@ -140,6 +157,7 @@ module.exports = {
   MAX_ZEICHEN,
   pruefeSignatur,
   leseText,
+  leseMedien,
   extrahiereEreignisse,
   istVeraltet,
   erkenneBefehl,
