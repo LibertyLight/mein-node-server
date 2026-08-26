@@ -43,6 +43,11 @@ function leseText(nachricht) {
         nachricht.interactive?.list_reply?.title ||
         ''
       );
+    // Bei Anhaengen steht der mitgeschickte Text in der Bildunterschrift.
+    case 'image':
+    case 'video':
+    case 'document':
+      return nachricht[nachricht.type]?.caption || '';
     default:
       return '';
   }

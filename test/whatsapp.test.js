@@ -44,6 +44,18 @@ function webhookKoerper(text, { id = 'wamid.1', von = '491701234567', typ = 'tex
   return { object: 'whatsapp_business_account', entry: [{ changes: [{ value: { messages: [nachricht] } }] }] };
 }
 
+/** Bild als Webhook-Körper; die Bildunterschrift ist der Text. */
+function bildKoerper({ unterschrift = null, mimeTyp = 'image/jpeg', ...optionen } = {}) {
+  const koerper = webhookKoerper(null, {
+    typ: 'image',
+    medien: { mime_type: mimeTyp, voice: false },
+    ...optionen,
+  });
+  const nachricht = koerper.entry[0].changes[0].value.messages[0];
+  if (unterschrift) nachricht.image.caption = unterschrift;
+  return koerper;
+}
+
 /** Sprachnachricht als Webhook-Körper. */
 function sprachKoerper(optionen = {}) {
   return webhookKoerper(null, { typ: 'audio', medien: {}, ...optionen });
@@ -57,6 +69,7 @@ function testBot({
   transkript = null,
   transkriptFehler = null,
   medienFehler = null,
+  datei = { daten: Buffer.from('audio'), mimeTyp: 'audio/ogg', groesse: 5 },
 } = {}) {
   const gesendet = [];
   const gesehen = [];
@@ -90,16 +103,18 @@ function testBot({
           },
         };
 
+  const geladen = [];
   const medien = {
-    hole: async () => {
+    hole: async (k, id, optionen) => {
+      geladen.push({ id, optionen });
       if (medienFehler) throw medienFehler;
-      return { daten: Buffer.from('audio'), mimeTyp: 'audio/ogg', groesse: 5 };
+      return datei;
     },
   };
 
   const still = { log() {}, warn() {}, error() {} };
   const bot = botModul.erstelleBot({ konfig, verlauf, claude, whisper, medien, versand, protokoll: still });
-  return { bot, verlauf, gesendet, gesehen, gehoert, konfig };
+  return { bot, verlauf, gesendet, gesehen, gehoert, geladen, konfig };
 }
 
 // --- Konfiguration -------------------------------------------------------
@@ -552,6 +567,119 @@ test('sehr lange Transkripte werden in der Vorschau gekürzt', () => {
   assert.ok(zeile.endsWith('…_'));
   assert.ok(zeile.length < 320);
   assert.ok(!zeile.includes('\n'));
+});
+
+// --- Bilder --------------------------------------------------------------
+
+test('die Bildunterschrift ist der Text der Nachricht', () => {
+  const [ereignis] = nachrichten.extrahiereEreignisse(bildKoerper({ unterschrift: 'Was kostet das?' }));
+
+  assert.strictEqual(ereignis.typ, 'image');
+  assert.strictEqual(ereignis.text, 'Was kostet das?');
+  assert.deepStrictEqual(ereignis.medien, { id: 'MEDIA1', mimeTyp: 'image/jpeg', stimme: false });
+});
+
+test('ein Bild geht als Bildblock vor dem Text an Claude', async () => {
+  const bild = { daten: Buffer.from([1, 2, 3]), mimeTyp: 'image/jpeg', groesse: 3 };
+  const { bot, gesendet, gesehen, geladen } = testBot({ datei: bild, antwort: 'Ein Fahrrad.' });
+
+  await bot.verarbeiteKoerper(bildKoerper({ unterschrift: 'Was ist das?' }));
+
+  // Beim Herunterladen gilt die Bild-Obergrenze, nicht die für Audio.
+  assert.strictEqual(geladen[0].optionen.maxBytes, 5 * 1024 * 1024);
+  assert.deepStrictEqual(gesehen[0], [
+    {
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: Buffer.from([1, 2, 3]).toString('base64') } },
+        { type: 'text', text: 'Was ist das?' },
+      ],
+    },
+  ]);
+  assert.deepStrictEqual(gesendet, [{ an: '491701234567', text: 'Ein Fahrrad.' }]);
+});
+
+test('ein Bild ohne Unterschrift wird als Frage verstanden', async () => {
+  const { bot, gesehen, konfig } = testBot({ datei: { daten: Buffer.from('x'), mimeTyp: 'image/png', groesse: 1 } });
+
+  await bot.verarbeiteKoerper(bildKoerper({ mimeTyp: 'image/png' }));
+
+  assert.strictEqual(gesehen[0][0].content[1].text, konfig.bildFrage);
+});
+
+test('Rückfragen zu einem Bild behalten es im Verlauf', async () => {
+  const { bot, gesehen } = testBot({ datei: { daten: Buffer.from('bild'), mimeTyp: 'image/jpeg', groesse: 4 } });
+
+  await bot.verarbeiteKoerper(bildKoerper({ unterschrift: 'Was ist das?', id: 'wamid.1' }));
+  await bot.verarbeiteKoerper(webhookKoerper('Und was kostet so etwas?', { id: 'wamid.2' }));
+
+  // Die zweite Anfrage schickt das Bild erneut mit -- die API ist zustandslos.
+  assert.strictEqual(gesehen[1][0].content[0].type, 'image');
+  assert.strictEqual(gesehen[1].at(-1).content, 'Und was kostet so etwas?');
+});
+
+test('nur die jüngsten Bilder gehen vollständig mit', () => {
+  const verlauf = verlaufModul.erstelleVerlauf(new DatabaseSync(':memory:'), { maxBilder: 1 });
+  verlauf.anhaengen('49', 'user', 'Bild eins', { daten: Buffer.from('ALT'), mimeTyp: 'image/jpeg' });
+  verlauf.anhaengen('49', 'assistant', 'Ein Baum.');
+  verlauf.anhaengen('49', 'user', 'Bild zwei', { daten: Buffer.from('NEU'), mimeTyp: 'image/png' });
+
+  const [alt, , neu] = verlauf.holen('49');
+  // Das ältere Bild schrumpft auf einen Hinweis, sonst zahlt man es ewig mit.
+  assert.strictEqual(alt.content, '[Bild] Bild eins');
+  assert.strictEqual(neu.content[0].source.media_type, 'image/png');
+  assert.strictEqual(neu.content[0].source.data, Buffer.from('NEU').toString('base64'));
+});
+
+test('ein Verlauf aus einer Fassung ohne Bilder wird nachgerüstet', () => {
+  const db = new DatabaseSync(':memory:');
+  // Tabelle wie vor dieser Änderung anlegen und füllen.
+  db.exec(`
+    CREATE TABLE wa_verlauf (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nummer TEXT NOT NULL,
+      rolle TEXT NOT NULL,
+      text TEXT NOT NULL,
+      erstellt_am TEXT NOT NULL
+    )
+  `);
+  db.prepare('INSERT INTO wa_verlauf (nummer, rolle, text, erstellt_am) VALUES (?, ?, ?, ?)')
+    .run('49', 'user', 'alte Nachricht', '2026-01-01');
+
+  const verlauf = verlaufModul.erstelleVerlauf(db);
+
+  // Der alte Verlauf bleibt erhalten, neue Bilder funktionieren trotzdem.
+  assert.deepStrictEqual(verlauf.holen('49'), [{ role: 'user', content: 'alte Nachricht' }]);
+  verlauf.anhaengen('49', 'user', 'neu mit Bild', { daten: Buffer.from('B'), mimeTyp: 'image/png' });
+  assert.strictEqual(verlauf.holen('49').at(-1).content[0].type, 'image');
+});
+
+test('unlesbare Bildformate werden gar nicht erst geladen', async () => {
+  const { bot, gesendet, gesehen, geladen } = testBot();
+
+  await bot.verarbeiteKoerper(bildKoerper({ mimeTyp: 'image/tiff' }));
+
+  assert.strictEqual(geladen.length, 0);
+  assert.strictEqual(gesehen.length, 0);
+  assert.strictEqual(gesendet[0].text, botModul.BILD_FORMAT);
+});
+
+test('ein zu großes Bild wird erklärt', async () => {
+  const { bot, gesendet } = testBot({ medienFehler: new medienModul.MedienFehler('zu groß', 'zu-gross') });
+
+  await bot.verarbeiteKoerper(bildKoerper());
+  assert.strictEqual(gesendet[0].text, botModul.BILD_ZU_GROSS);
+});
+
+test('ein Befehl in der Bildunterschrift spart den Download', async () => {
+  const { bot, verlauf, gesendet, geladen } = testBot();
+
+  await bot.verarbeiteKoerper(webhookKoerper('Merk dir: blau', { id: 'wamid.1' }));
+  await bot.verarbeiteKoerper(bildKoerper({ unterschrift: '/neu', id: 'wamid.2' }));
+
+  assert.strictEqual(geladen.length, 0);
+  assert.deepStrictEqual(verlauf.holen('491701234567'), []);
+  assert.match(gesendet[1].text, /vergessen/);
 });
 
 // --- Antwortauswertung ---------------------------------------------------

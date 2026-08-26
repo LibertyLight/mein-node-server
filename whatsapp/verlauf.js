@@ -6,6 +6,10 @@
  * Die Messages-API ist zustandslos: bei jeder Anfrage muss der bisherige
  * Verlauf mitgeschickt werden. Er liegt deshalb in derselben SQLite-Datei wie
  * der Rest der Anwendung und ueberlebt so einen Neustart des Servers.
+ *
+ * Bilder liegen als BLOB in derselben Zeile. Weil sie bei jeder Anfrage
+ * mitgehen und jedes Mal aufs Neue kosten, wandern nur die juengsten davon
+ * wirklich mit -- aeltere schrumpfen auf einen Hinweis im Text.
  */
 
 /** Rollen, die die API kennt -- alles andere wuerde die Anfrage zerlegen. */
@@ -15,7 +19,17 @@ function jetztAlsText() {
   return new Date().toISOString();
 }
 
-function erstelleVerlauf(db, { maxNachrichten = 20 } = {}) {
+/**
+ * Spalten nachruesten, ohne bestehende Verlaeufe zu verlieren: die Tabelle
+ * kann aus einer aelteren Fassung stammen, die noch keine Bilder kannte.
+ */
+function ergaenzeSpalten(db) {
+  const vorhanden = new Set(db.prepare('PRAGMA table_info(wa_verlauf)').all().map((s) => s.name));
+  if (!vorhanden.has('bild_daten')) db.exec('ALTER TABLE wa_verlauf ADD COLUMN bild_daten BLOB');
+  if (!vorhanden.has('bild_typ')) db.exec('ALTER TABLE wa_verlauf ADD COLUMN bild_typ TEXT');
+}
+
+function erstelleVerlauf(db, { maxNachrichten = 20, maxBilder = 2 } = {}) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS wa_verlauf (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,6 +40,7 @@ function erstelleVerlauf(db, { maxNachrichten = 20 } = {}) {
     )
   `);
   db.exec('CREATE INDEX IF NOT EXISTS wa_verlauf_nummer_idx ON wa_verlauf (nummer, id)');
+  ergaenzeSpalten(db);
 
   // Meta stellt Webhooks "mindestens einmal" zu und wiederholt sie bei jedem
   // Zeitueberschreiten. Ohne Gedaechtnis wuerde derselbe Satz mehrfach
@@ -38,11 +53,11 @@ function erstelleVerlauf(db, { maxNachrichten = 20 } = {}) {
   `);
 
   const einfuegen = db.prepare(
-    'INSERT INTO wa_verlauf (nummer, rolle, text, erstellt_am) VALUES (?, ?, ?, ?)',
+    'INSERT INTO wa_verlauf (nummer, rolle, text, bild_daten, bild_typ, erstellt_am) VALUES (?, ?, ?, ?, ?, ?)',
   );
   const lesen = db.prepare(`
-    SELECT rolle, text FROM (
-      SELECT id, rolle, text FROM wa_verlauf WHERE nummer = ? ORDER BY id DESC LIMIT ?
+    SELECT rolle, text, bild_daten, bild_typ FROM (
+      SELECT id, rolle, text, bild_daten, bild_typ FROM wa_verlauf WHERE nummer = ? ORDER BY id DESC LIMIT ?
     ) ORDER BY id ASC
   `);
   const loeschen = db.prepare('DELETE FROM wa_verlauf WHERE nummer = ?');
@@ -52,12 +67,49 @@ function erstelleVerlauf(db, { maxNachrichten = 20 } = {}) {
   );
   const altesAufraeumen = db.prepare('DELETE FROM wa_gesehen WHERE erstellt_am < ?');
 
-  /** Eine Nachricht anhaengen. Leere Texte lehnt die API ab, also gar nicht erst speichern. */
-  function anhaengen(nummer, rolle, text) {
+  /**
+   * Eine Nachricht anhaengen. Leere Texte lehnt die API ab, also gar nicht
+   * erst speichern -- auch zu einem Bild gehoert immer ein Text.
+   *
+   * @param bild  optional {daten: Buffer, mimeTyp: string}
+   */
+  function anhaengen(nummer, rolle, text, bild = null) {
     const inhalt = String(text ?? '').trim();
     if (!inhalt || !ROLLEN.has(rolle)) return false;
-    einfuegen.run(String(nummer), rolle, inhalt, jetztAlsText());
+
+    einfuegen.run(
+      String(nummer),
+      rolle,
+      inhalt,
+      bild ? bild.daten : null,
+      bild ? bild.mimeTyp : null,
+      jetztAlsText(),
+    );
     return true;
+  }
+
+  /** Eine Zeile in das Format der Messages-API bringen. */
+  function alsNachricht(zeile, mitBild) {
+    if (!zeile.bild_daten) return { role: zeile.rolle, content: zeile.text };
+
+    // Aelteres Bild: nur noch der Hinweis, dass da eins war.
+    if (!mitBild) return { role: zeile.rolle, content: `[Bild] ${zeile.text}` };
+
+    return {
+      role: zeile.rolle,
+      content: [
+        // Bild vor Text -- so liest Claude es am besten.
+        {
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: zeile.bild_typ,
+            data: Buffer.from(zeile.bild_daten).toString('base64'),
+          },
+        },
+        { type: 'text', text: zeile.text },
+      ],
+    };
   }
 
   /**
@@ -69,7 +121,18 @@ function erstelleVerlauf(db, { maxNachrichten = 20 } = {}) {
   function holen(nummer) {
     const zeilen = lesen.all(String(nummer), maxNachrichten);
     while (zeilen.length > 0 && zeilen[0].rolle !== 'user') zeilen.shift();
-    return zeilen.map((zeile) => ({ role: zeile.rolle, content: zeile.text }));
+
+    // Von hinten nach vorn: nur die juengsten Bilder gehen wirklich mit.
+    const vollstaendig = new Set();
+    let uebrig = maxBilder;
+    for (let i = zeilen.length - 1; i >= 0 && uebrig > 0; i -= 1) {
+      if (zeilen[i].bild_daten) {
+        vollstaendig.add(i);
+        uebrig -= 1;
+      }
+    }
+
+    return zeilen.map((zeile, i) => alsNachricht(zeile, vollstaendig.has(i)));
   }
 
   function leeren(nummer) {
@@ -95,7 +158,7 @@ function erstelleVerlauf(db, { maxNachrichten = 20 } = {}) {
     return Number(altesAufraeumen.run(grenze).changes);
   }
 
-  return { anhaengen, holen, leeren, schonGesehen, aufraeumen, maxNachrichten };
+  return { anhaengen, holen, leeren, schonGesehen, aufraeumen, maxNachrichten, maxBilder };
 }
 
 module.exports = { erstelleVerlauf };

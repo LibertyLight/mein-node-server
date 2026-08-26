@@ -83,6 +83,7 @@ function erstelleRouter({ konfig, bot, protokoll = console }) {
       aufwand: konfig.aufwand,
       graphVersion: konfig.graphVersion,
       verlaufNachrichten: konfig.verlaufNachrichten,
+      bilder: { maxMB: Math.round(konfig.maxBildBytes / (1024 * 1024)), imVerlauf: konfig.bilderImVerlauf },
       sprachnachrichten: konfig.transkription
         ? { modell: konfig.whisperModell, dienst: konfig.whisperUrl }
         : false,

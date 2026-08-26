@@ -17,6 +17,9 @@ const VORGABEN = {
   whisperUrl: 'https://api.openai.com/v1',
   whisperModell: 'whisper-1',
   maxAudioMB: 20,
+  maxBildMB: 5,
+  bilderImVerlauf: 2,
+  bildFrage: 'Was ist auf diesem Bild zu sehen?',
   systemPrompt: [
     'Du bist Claude und antwortest über WhatsApp.',
     'Fasse dich kurz: eine WhatsApp-Nachricht fasst höchstens 4096 Zeichen.',
@@ -72,6 +75,12 @@ function lade(umgebung = process.env) {
     whisperSprache: umgebung.WHISPER_SPRACHE || '',
     maxAudioBytes: zahl(umgebung.WHATSAPP_MAX_AUDIO_MB, VORGABEN.maxAudioMB) * 1024 * 1024,
     transkriptZeigen: umgebung.WHATSAPP_TRANSKRIPT_ZEIGEN !== '0',
+
+    // Bilder kann Claude selbst lesen -- dafuer braucht es keinen zweiten
+    // Dienst und keine Zugangsdaten.
+    maxBildBytes: zahl(umgebung.WHATSAPP_MAX_BILD_MB, VORGABEN.maxBildMB) * 1024 * 1024,
+    bilderImVerlauf: zahl(umgebung.WHATSAPP_BILDER_IM_VERLAUF, VORGABEN.bilderImVerlauf),
+    bildFrage: umgebung.WHATSAPP_BILD_FRAGE || VORGABEN.bildFrage,
   };
 }
 
