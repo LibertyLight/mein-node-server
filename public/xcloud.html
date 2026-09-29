@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Xbox Cloud Touch-Controller</title>
+  <style>
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 640px; margin: 0 auto; padding: 16px; background: #101418; color: #e8eaed; }
+    a.knopf { display: block; text-align: center; background: #107c10; color: #fff; padding: 14px; border-radius: 10px; text-decoration: none; font-weight: 700; margin: 16px 0; }
+    code { background: #222a32; padding: 1px 6px; border-radius: 4px; }
+    li { margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <h1>🎮 Xbox Cloud Touch-Controller</h1>
+  <p>Spiele auf <code>xbox.com/play</code> ohne Controller: Das Userscript legt ein Touch-Gamepad über den Stream und meldet es dem Browser als Xbox-Controller.</p>
+
+  <a class="knopf" href="/xcloud-touch.user.js">Userscript installieren</a>
+
+  <h2>Einrichtung</h2>
+  <ol>
+    <li>Firefox für Android (oder Kiwi Browser) nehmen und dort die Erweiterung <b>Violentmonkey</b> oder <b>Tampermonkey</b> installieren.</li>
+    <li>Auf „Userscript installieren“ tippen und in der Erweiterung bestätigen.</li>
+    <li><code>https://www.xbox.com/play</code> öffnen, anmelden, Spiel starten. Handy ins Querformat drehen.</li>
+  </ol>
+
+  <h2>Bedienung</h2>
+  <ul>
+    <li>Beide Sticks, ABXY, D-Pad, Schultertasten, Trigger, Sicht/Xbox/Menü und L3/R3 sind vorhanden. Mehrere Finger gleichzeitig funktionieren.</li>
+    <li>🎮 oben in der Mitte öffnet die Einstellungen: Größe, Deckkraft, Vibration und Controller ein/aus.</li>
+    <li>Schaltest du den Controller aus, meldet sich das virtuelle Pad ab. Ein echter Controller wird daneben weiter erkannt.</li>
+  </ul>
+
+  <h2>Gut zu wissen</h2>
+  <ul>
+    <li>Im Browser ist Vollbild sinnvoll, sonst verdecken Adressleiste und Statusleiste einen Teil des Bildes.</li>
+    <li>Viele Spiele bringen in der offiziellen Xbox-App bereits eigene Touch-Steuerung mit. Dieses Skript ist für den Rest gedacht.</li>
+  </ul>
+</body>
+</html>
