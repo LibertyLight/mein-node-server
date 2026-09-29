@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Xbox Cloud Touch-Controller
 // @namespace    mein-node-server
-// @version      1.0.0
+// @version      1.1.0
 // @description  Blendet auf xbox.com/play ein Touch-Gamepad ein und meldet es dem Browser als echten Xbox-Controller.
 // @match        https://www.xbox.com/*
 // @run-at       document-start
@@ -100,6 +100,23 @@
       fenster.dispatchEvent(ereignis);
     }
 
+    // Die Seite haengt ihren Listener oft erst nach dem Start an. Solche
+    // Listener bekommen das bereits erfolgte Verbinden nachgeliefert.
+    const echtesAddListener = fenster.addEventListener;
+    fenster.addEventListener = function (art, listener, ...rest) {
+      echtesAddListener.call(this, art, listener, ...rest);
+      if (art === 'gamepadconnected' && angemeldet !== null && listener) {
+        setTimeout(() => {
+          const gp = navigator.getGamepads().find((g) => g && g.id === PAD_ID);
+          if (!gp) return;
+          const ereignis = new Event('gamepadconnected');
+          Object.defineProperty(ereignis, 'gamepad', { value: gp });
+          if (typeof listener === 'function') listener.call(fenster, ereignis);
+          else if (listener.handleEvent) listener.handleEvent(ereignis);
+        }, 0);
+      }
+    };
+
     function synchronisiereAnmeldung() {
       if (sichtbar && angemeldet === null) {
         const gp = navigator.getGamepads().find((g) => g && g.id === PAD_ID);
@@ -121,7 +138,7 @@
       :host { all: initial; }
       .wurzel {
         position: fixed; inset: 0; z-index: 2147483647; pointer-events: none;
-        --s: ${einstellungen.groesse}; --o: ${einstellungen.deckkraft};
+        --s: 1; --o: ${einstellungen.deckkraft};
         font: 600 calc(var(--s) * 14px) system-ui, sans-serif; color: #fff;
         -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
       }
@@ -284,8 +301,15 @@
       });
     });
 
+    // Entworfen fuer 380 px Hoehe; auf kuerzeren Bildschirmen (Querformat mit
+    // Adressleiste) wird automatisch verkleinert, damit nichts ueberlappt.
+    function skalierung() {
+      const auto = Math.min(1, window.innerHeight / 380);
+      return Math.round(einstellungen.groesse * auto * 100) / 100;
+    }
+
     function wende() {
-      wurzelEl.style.setProperty('--s', einstellungen.groesse);
+      wurzelEl.style.setProperty('--s', skalierung());
       wurzelEl.style.setProperty('--o', einstellungen.deckkraft);
       sichtbar = einstellungen.sichtbar;
       wurzelEl.classList.toggle('aus', !sichtbar);
@@ -304,6 +328,7 @@
       einhaengen();
       wende();
     }
+    window.addEventListener('resize', () => wurzelEl.style.setProperty('--s', skalierung()));
     document.addEventListener('fullscreenchange', einhaengen);
     document.addEventListener('webkitfullscreenchange', einhaengen);
     if (document.body) fertig();
