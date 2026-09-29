@@ -3,8 +3,7 @@
 // @namespace    mein-node-server
 // @version      1.0.0
 // @description  Blendet auf xbox.com/play ein Touch-Gamepad ein und meldet es dem Browser als echten Xbox-Controller.
-// @match        https://www.xbox.com/*/play*
-// @match        https://www.xbox.com/play*
+// @match        https://www.xbox.com/*
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
