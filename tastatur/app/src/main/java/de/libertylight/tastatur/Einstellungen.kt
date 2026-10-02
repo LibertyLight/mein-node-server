@@ -1,0 +1,134 @@
+package de.libertylight.tastatur
+
+import android.content.Context
+import android.content.res.Configuration
+import android.graphics.Color
+import org.json.JSONArray
+
+/** Alle Einstellungen an einem Ort. Jede Aenderung erhoeht [stand], damit die Tastatur sie bemerkt. */
+class Einstellungen(context: Context) {
+    private val p = context.getSharedPreferences("tastatur", Context.MODE_PRIVATE)
+
+    private fun text(schluessel: String, vorgabe: String) = p.getString(schluessel, vorgabe) ?: vorgabe
+    private fun setze(block: android.content.SharedPreferences.Editor.() -> Unit) =
+        p.edit().apply(block).putInt("stand", stand + 1).apply()
+
+    val stand: Int get() = p.getInt("stand", 0)
+
+    var serverUrl: String
+        get() = text("server_url", "http://127.0.0.1:3000")
+        set(v) = setze { putString("server_url", v.trim().trimEnd('/')) }
+
+    var token: String
+        get() = text("token", "")
+        set(v) = setze { putString("token", v.trim()) }
+
+    var zahlenreihe: Boolean
+        get() = p.getBoolean("zahlenreihe", true)
+        set(v) = setze { putBoolean("zahlenreihe", v) }
+
+    var autoGross: Boolean
+        get() = p.getBoolean("auto_gross", true)
+        set(v) = setze { putBoolean("auto_gross", v) }
+
+    var doppelLeerPunkt: Boolean
+        get() = p.getBoolean("doppel_leer", true)
+        set(v) = setze { putBoolean("doppel_leer", v) }
+
+    var vorschlaege: Boolean
+        get() = p.getBoolean("vorschlaege", true)
+        set(v) = setze { putBoolean("vorschlaege", v) }
+
+    var vibration: Boolean
+        get() = p.getBoolean("vibration", true)
+        set(v) = setze { putBoolean("vibration", v) }
+
+    var tastenton: Boolean
+        get() = p.getBoolean("tastenton", false)
+        set(v) = setze { putBoolean("tastenton", v) }
+
+    /** Hoehe in Prozent der Standardhoehe. */
+    var hoehe: Int
+        get() = p.getInt("hoehe", 100)
+        set(v) = setze { putInt("hoehe", v.coerceIn(70, 140)) }
+
+    /** "system", "hell" oder "dunkel" */
+    var thema: String
+        get() = text("thema", "system")
+        set(v) = setze { putString("thema", v) }
+
+    /** 0 = aus, -1 = links, 1 = rechts */
+    var einhand: Int
+        get() = p.getInt("einhand", 0)
+        set(v) = setze { putInt("einhand", v) }
+
+    /** Wird hochgezaehlt, wenn gelernte Woerter geloescht werden sollen. */
+    var woerterLoeschen: Int
+        get() = p.getInt("woerter_loeschen", 0)
+        set(v) = setze { putInt("woerter_loeschen", v) }
+
+    var zielSprache: String
+        get() = text("ziel_sprache", "en")
+        set(v) = p.edit().putString("ziel_sprache", v).apply()
+
+    var zuletztEmojis: List<String>
+        get() = liste("emojis_zuletzt")
+        set(v) = p.edit().putString("emojis_zuletzt", JSONArray(v.take(32)).toString()).apply()
+
+    var zwischenablage: List<String>
+        get() = liste("zwischenablage")
+        set(v) = p.edit().putString("zwischenablage", JSONArray(v.take(MAX_ABLAGE)).toString()).apply()
+
+    private fun liste(schluessel: String): List<String> = try {
+        val a = JSONArray(text(schluessel, "[]"))
+        List(a.length()) { a.getString(it) }
+    } catch (_: Exception) {
+        emptyList()
+    }
+
+    fun istDunkel(context: Context): Boolean = when (thema) {
+        "hell" -> false
+        "dunkel" -> true
+        else -> (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+    }
+
+    companion object {
+        const val MAX_ABLAGE = 30
+    }
+}
+
+/** Farben der Tastatur, hell und dunkel -- angelehnt an das Samsung-Keyboard. */
+data class Thema(
+    val hintergrund: Int,
+    val taste: Int,
+    val sonder: Int,
+    val gedrueckt: Int,
+    val text: Int,
+    val textLeise: Int,
+    val akzent: Int,
+    val akzentText: Int,
+) {
+    companion object {
+        val HELL = Thema(
+            hintergrund = Color.parseColor("#EEEFF3"),
+            taste = Color.parseColor("#FFFFFF"),
+            sonder = Color.parseColor("#D9DCE3"),
+            gedrueckt = Color.parseColor("#BFC4CF"),
+            text = Color.parseColor("#1B1C20"),
+            textLeise = Color.parseColor("#7A7F8C"),
+            akzent = Color.parseColor("#3E7BFA"),
+            akzentText = Color.WHITE,
+        )
+        val DUNKEL = Thema(
+            hintergrund = Color.parseColor("#121316"),
+            taste = Color.parseColor("#2B2D33"),
+            sonder = Color.parseColor("#1E2025"),
+            gedrueckt = Color.parseColor("#4A4E58"),
+            text = Color.parseColor("#F1F2F5"),
+            textLeise = Color.parseColor("#9AA0AD"),
+            akzent = Color.parseColor("#5C8DFF"),
+            akzentText = Color.WHITE,
+        )
+    }
+}

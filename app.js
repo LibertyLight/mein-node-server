@@ -3,6 +3,7 @@ const { DatabaseSync } = require('node:sqlite');
 const netzRouten = require('./netz/routen');
 const netzKonfig = require('./netz/konfig');
 const whatsapp = require('./whatsapp');
+const tastatur = require('./tastatur-ki');
 
 const app = express();
 const PORT = 3000;
@@ -39,6 +40,15 @@ for (const hinweis of netzKonfig.anwenden()) {
   console.log(`[netzdoktor] ${hinweis}`);
 }
 app.use('/api/netz', netzRouten.erstelleRouter({ port: PORT }));
+
+// KI-Schreibhilfe fuer die Android-Tastatur. Einrichtung: siehe TASTATUR.md
+const tastaturKi = tastatur.erstelle();
+for (const hinweis of tastaturKi.hinweise) {
+  console.log(`[tastatur] ${hinweis}`);
+}
+if (tastaturKi.router) {
+  app.use('/api/tastatur', tastaturKi.router);
+}
 
 // Alle Einträge abrufen
 app.get('/api/nachrichten', (req, res) => {
