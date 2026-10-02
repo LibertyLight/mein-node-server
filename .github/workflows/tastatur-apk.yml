@@ -18,12 +18,13 @@ jobs:
       run:
         working-directory: tastatur
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
-      - uses: android-actions/setup-android@v3
+      # Das Android-SDK ist auf ubuntu-latest vorinstalliert (ANDROID_HOME);
+      # fehlende Plattformen laedt das Android-Gradle-Plugin selbst nach.
       - name: Tests und APK
         run: ./gradlew --no-daemon testDebugUnitTest assembleDebug
       - uses: actions/upload-artifact@v4
