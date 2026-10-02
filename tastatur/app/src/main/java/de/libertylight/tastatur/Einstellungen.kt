@@ -39,6 +39,19 @@ class Einstellungen(context: Context) {
         get() = p.getBoolean("vorschlaege", true)
         set(v) = setze { putBoolean("vorschlaege", v) }
 
+    var autokorrektur: Boolean
+        get() = p.getBoolean("autokorrektur", true)
+        set(v) = setze { putBoolean("autokorrektur", v) }
+
+    /** Buchstabengroesse in Prozent der Vorgabe. */
+    var schrift: Int
+        get() = p.getInt("schrift", 100)
+        set(v) = setze { putInt("schrift", v.coerceIn(70, 160)) }
+
+    var grossBeschriftung: Boolean
+        get() = p.getBoolean("gross_beschriftung", false)
+        set(v) = setze { putBoolean("gross_beschriftung", v) }
+
     var vibration: Boolean
         get() = p.getBoolean("vibration", true)
         set(v) = setze { putBoolean("vibration", v) }

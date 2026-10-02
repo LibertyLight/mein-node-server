@@ -32,6 +32,9 @@ import java.io.File
  */
 class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
 
+    /** Eine Autokorrektur, die ein sofortiges ⌫ wieder rueckgaengig macht. */
+    private data class Korrigiert(val original: String, val ersetzt: String, val trenner: String = "")
+
     /** Text, den die Schreibhilfe bearbeitet: die Markierung oder das ganze Feld. */
     data class Quelle(val text: String, val markiert: Boolean)
 
@@ -55,6 +58,7 @@ class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
     private var letzteShiftZeit = 0L
     private var letztesLeer = 0L
     private var automatischesLeer = false
+    private var letzteKorrektur: Korrigiert? = null
     private var werkzeugeErzwungen = false
     private var geschuetzt = false
     private var keinLernen = false
@@ -71,12 +75,22 @@ class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
         super.onCreate()
         einstellungen = Einstellungen(this)
         ki = KiClient(einstellungen)
-        val grund = resources.openRawResource(R.raw.woerter_de).bufferedReader().use { it.readLines() }
-        val datei = File(filesDir, "gelernt.tsv")
-        woerterbuch = Woerterbuch(grund, object : Woerterbuch.Speicher {
-            override fun lies() = if (datei.exists()) datei.readText() else null
-            override fun schreib(inhalt: String) = datei.writeText(inhalt)
+        // 65.000 Woerter zu laden dauert einen Moment -- im Hintergrund, damit die Tastatur
+        // sofort erscheint. Bis dahin ein leeres Woerterbuch, das nichts speichert (sonst
+        // wuerde es die Datei mit den gelernten Woertern ueberschreiben).
+        woerterbuch = Woerterbuch(emptyList(), object : Woerterbuch.Speicher {
+            override fun lies(): String? = null
+            override fun schreib(inhalt: String) {}
         })
+        Thread {
+            val grund = resources.openRawResource(R.raw.woerter_de).bufferedReader().use { it.readLines() }
+            val datei = File(filesDir, "gelernt.tsv")
+            val geladen = Woerterbuch(grund, object : Woerterbuch.Speicher {
+                override fun lies() = if (datei.exists()) datei.readText() else null
+                override fun schreib(inhalt: String) = datei.writeText(inhalt)
+            })
+            haupt.post { woerterbuch = geladen }
+        }.start()
         woerterLoeschen = einstellungen.woerterLoeschen
         ablage?.addPrimaryClipChangedListener(ablageBeobachter)
     }
@@ -122,6 +136,7 @@ class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
         tastenfeld.enterText = enterBeschriftung(info)
         if (!restarting) tastenfeld.umschalt = Umschalt.AUS
         automatischesLeer = false
+        letzteKorrektur = null
         werkzeugeErzwungen = false
         zeigeTastatur()
     }
@@ -155,6 +170,8 @@ class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
             this.thema = thema
             hoehenFaktor = einstellungen.hoehe / 100f
             vibration = einstellungen.vibration
+            schriftFaktor = einstellungen.schrift / 100f
+            grossBeschriftung = einstellungen.grossBeschriftung
         }
         inhalt = FrameLayout(this)
         inhalt.addView(tastenfeld)
@@ -265,7 +282,8 @@ class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
         }
         val vor = ic.getTextBeforeCursor(80, 0) ?: ""
         val wort = TextLogik.aktuellesWort(vor)
-        val liste = woerterbuch.vorschlaege(wort, TextLogik.vorherigesWort(vor))
+        val vorher = TextLogik.vorherigesWort(vor)
+        val liste = woerterbuch.vorschlaege(wort, vorher)
         if (liste.isEmpty()) {
             zeigeLeiste(werkzeuge)
             return
@@ -274,14 +292,20 @@ class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
         vorschlagLeiste.removeAllViews()
         vorschlagLeiste.addView(b.symbol("✨", "Schreibhilfe", 18f) { zeigeFlaeche(KiFlaeche(this, b).baue()) },
             b.abstand(breite = b.dp(44), hoehe = ViewGroup.LayoutParams.MATCH_PARENT))
-        // Unbekanntes Wort mit Korrekturvorschlag: den ersten echten Vorschlag hervorheben.
-        val hervorheben = if (wort.isNotEmpty() && !woerterbuch.kennt(wort) && liste.size > 1) 1 else if (wort.isEmpty()) 0 else -1
+        // Fett: was die Leertaste einsetzen wird -- die Autokorrektur oder sonst das Getippte selbst.
+        val korrektur = if (wort.isNotEmpty() && darfKorrigieren(vor, wort)) woerterbuch.korrektur(wort, vorher) else null
+        val hervorheben = when {
+            korrektur != null -> liste.indexOf(korrektur)
+            wort.isEmpty() -> 0
+            else -> -1
+        }
+        val groesse = 17f * (einstellungen.schrift / 100f).coerceIn(0.9f, 1.3f)
         liste.forEachIndexed { i, vorschlag ->
             if (i > 0) vorschlagLeiste.addView(View(this).apply { setBackgroundColor(b.thema.textLeise) },
                 b.abstand(breite = 1, hoehe = b.dp(20)))
             vorschlagLeiste.addView(TextView(this).apply {
                 text = vorschlag
-                textSize = 16f
+                textSize = groesse
                 gravity = Gravity.CENTER
                 isSingleLine = true
                 setTextColor(b.thema.text)
@@ -306,15 +330,39 @@ class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
         if (getippt.isNotEmpty()) ic.deleteSurroundingText(getippt.length, 0)
         ic.commitText("$vorschlag ", 1)
         ic.endBatchEdit()
-        if (!keinLernen) woerterbuch.lerne(vorschlag, vorher)
+        // Das Getippte bewusst angetippt: merken, damit es nicht mehr korrigiert wird
+        if (!keinLernen) woerterbuch.lerne(vorschlag, vorher, if (vorschlag == getippt) 2 else 1)
         automatischesLeer = true
+        letzteKorrektur = null
         if (tastenfeld.umschalt == Umschalt.EINMAL) tastenfeld.umschalt = Umschalt.AUS
     }
 
-    private fun lerneLetztesWort() {
-        if (keinLernen) return
-        val vor = currentInputConnection?.getTextBeforeCursor(80, 0) ?: return
-        woerterbuch.lerne(TextLogik.aktuellesWort(vor), TextLogik.vorherigesWort(vor))
+    /** Autokorrektur nur in normalen Textfeldern -- nicht in Adressen, Handles, Passwoertern. */
+    private fun darfKorrigieren(vor: CharSequence, wort: String): Boolean {
+        if (!einstellungen.autokorrektur || keineVorschlaege || seite != Seite.BUCHSTABEN) return false
+        val davor = vor.getOrNull(vor.length - wort.length - 1)
+        return davor == null || davor !in "@#/\\._:"
+    }
+
+    /**
+     * Wird vor einem Leer- oder Satzzeichen aufgerufen: korrigiert das gerade beendete Wort
+     * (falls noetig) und lernt es. Liefert die Korrektur, damit ⌫ sie zuruecknehmen kann.
+     */
+    private fun schliesseWortAb(): Korrigiert? {
+        val ic = currentInputConnection ?: return null
+        val vor = ic.getTextBeforeCursor(80, 0) ?: return null
+        val wort = TextLogik.aktuellesWort(vor)
+        if (wort.isEmpty()) return null
+        val vorher = TextLogik.vorherigesWort(vor)
+        val korrektur = if (darfKorrigieren(vor, wort)) woerterbuch.korrektur(wort, vorher) else null
+        if (korrektur == null) {
+            if (!keinLernen) woerterbuch.lerne(wort, vorher)
+            return null
+        }
+        ic.deleteSurroundingText(wort.length, 0)
+        ic.commitText(korrektur, 1)
+        if (!keinLernen) woerterbuch.lerne(korrektur, vorher)
+        return Korrigiert(wort, korrektur)
     }
 
     // ================================================================ Tasten
@@ -322,7 +370,9 @@ class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
     override fun zeichen(text: String) {
         val ic = currentInputConnection ?: return
         val t = if (tastenfeld.umschalt != Umschalt.AUS && text.length == 1) TextLogik.gross(text) else text
-        if (!t[0].isLetterOrDigit()) lerneLetztesWort()
+        letzteKorrektur = null
+        // Satzzeichen beenden ein Wort; Apostroph und Bindestrich gehoeren zum Wort ("geht's", "E-Mail")
+        val trennt = !t[0].isLetterOrDigit() && t[0] != '\'' && t[0] != '-'
 
         if (automatischesLeer && TextLogik.schliesstAn(t) && ic.getTextBeforeCursor(1, 0) == " ") {
             // "Hallo " + "," wird zu "Hallo, "
@@ -330,6 +380,12 @@ class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
             ic.deleteSurroundingText(1, 0)
             ic.commitText("$t ", 1)
             ic.endBatchEdit()
+        } else if (trennt) {
+            ic.beginBatchEdit()
+            val korrigiert = schliesseWortAb()
+            ic.commitText(t, 1)
+            ic.endBatchEdit()
+            letzteKorrektur = korrigiert?.copy(trenner = t)
         } else {
             ic.commitText(t, 1)
         }
@@ -363,20 +419,25 @@ class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
         val ic = currentInputConnection ?: return
         val jetzt = SystemClock.uptimeMillis()
         val vor = ic.getTextBeforeCursor(2, 0) ?: ""
+        val korrigiert: Korrigiert?
         when {
             einstellungen.doppelLeerPunkt && jetzt - letztesLeer < 600 && TextLogik.doppelLeerzeichenPunkt(vor) -> {
                 ic.beginBatchEdit()
                 ic.deleteSurroundingText(1, 0)
                 ic.commitText(". ", 1)
                 ic.endBatchEdit()
+                korrigiert = null
             }
             // Nach einem gewaehlten Vorschlag steht das Leerzeichen schon da.
-            automatischesLeer -> {}
+            automatischesLeer -> korrigiert = null
             else -> {
-                lerneLetztesWort()
+                ic.beginBatchEdit()
+                korrigiert = schliesseWortAb()
                 ic.commitText(" ", 1)
+                ic.endBatchEdit()
             }
         }
+        letzteKorrektur = korrigiert?.copy(trenner = " ")
         automatischesLeer = false
         letztesLeer = jetzt
         if (seite == Seite.SYMBOLE || seite == Seite.SYMBOLE2) { seite = Seite.BUCHSTABEN; zeigeTastatur() }
@@ -384,8 +445,9 @@ class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
 
     private fun enter() {
         val ic = currentInputConnection ?: return
-        lerneLetztesWort()
+        schliesseWortAb()
         automatischesLeer = false
+        letzteKorrektur = null
         val info = currentInputEditorInfo
         val aktion = info.imeOptions and EditorInfo.IME_MASK_ACTION
         val mehrzeilig = (info.inputType and InputType.TYPE_TEXT_FLAG_MULTI_LINE) != 0
@@ -419,6 +481,7 @@ class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
     }
 
     override fun cursor(schritte: Int) {
+        letzteKorrektur = null
         val code = if (schritte < 0) KeyEvent.KEYCODE_DPAD_LEFT else KeyEvent.KEYCODE_DPAD_RIGHT
         repeat(kotlin.math.abs(schritte)) { sendDownUpKeyEvents(code) }
     }
@@ -436,12 +499,28 @@ class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
     fun schreibe(text: String) {
         currentInputConnection?.commitText(text, 1)
         automatischesLeer = false
+        letzteKorrektur = null
     }
 
     /** Loescht ein Zeichen oder die Markierung. Ueber KEYCODE_DEL, damit Emojis ganz verschwinden. */
     fun loesche() {
-        sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
         automatischesLeer = false
+        val k = letzteKorrektur
+        letzteKorrektur = null
+        val ic = currentInputConnection
+        if (k != null && ic != null) {
+            // ⌫ direkt nach einer Autokorrektur: das Getippte zurueckholen und es sich merken
+            val erwartet = k.ersetzt + k.trenner
+            if (ic.getTextBeforeCursor(erwartet.length, 0)?.toString() == erwartet) {
+                ic.beginBatchEdit()
+                ic.deleteSurroundingText(erwartet.length, 0)
+                ic.commitText(k.original + k.trenner, 1)
+                ic.endBatchEdit()
+                if (!keinLernen) woerterbuch.lerne(k.original, "", 2)
+                return
+            }
+        }
+        sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
     }
 
     fun taste(code: Int, umschalt: Boolean, strg: Boolean = false) {

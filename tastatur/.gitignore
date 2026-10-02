@@ -4,3 +4,5 @@ local.properties
 *.iml
 .idea/
 .kotlin/
+de_50k.txt
+deu_news_2023_300K*

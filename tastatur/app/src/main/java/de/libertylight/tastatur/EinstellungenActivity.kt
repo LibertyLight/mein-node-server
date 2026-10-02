@@ -127,12 +127,25 @@ class EinstellungenActivity : Activity() {
         ueberschrift("3 · Tippen")
         schalter("Zahlenreihe anzeigen", e.zahlenreihe) { e.zahlenreihe = it }
         schalter("Wortvorschläge", e.vorschlaege) { e.vorschlaege = it }
+        schalter("Autokorrektur (⌫ direkt danach macht sie rückgängig)", e.autokorrektur) { e.autokorrektur = it }
         schalter("Automatische Großschreibung", e.autoGross) { e.autoGross = it }
         schalter("Doppelte Leertaste setzt Punkt", e.doppelLeerPunkt) { e.doppelLeerPunkt = it }
         schalter("Vibration beim Tippen", e.vibration) { e.vibration = it }
         schalter("Tastenton", e.tastenton) { e.tastenton = it }
 
         ueberschrift("4 · Aussehen")
+        val schriftText = text("Buchstabengröße: ${e.schrift} %")
+        liste.addView(schriftText)
+        liste.addView(SeekBar(this).apply {
+            max = 90
+            progress = e.schrift - 70
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(s: SeekBar?, wert: Int, vomNutzer: Boolean) { schriftText.text = "Buchstabengröße: ${wert + 70} %" }
+                override fun onStartTrackingTouch(s: SeekBar?) {}
+                override fun onStopTrackingTouch(s: SeekBar?) { e.schrift = progress + 70 }
+            })
+        })
+        schalter("Tasten in Großbuchstaben beschriften", e.grossBeschriftung) { e.grossBeschriftung = it }
         val hoeheText = text("Höhe: ${e.hoehe} %")
         liste.addView(hoeheText)
         liste.addView(SeekBar(this).apply {

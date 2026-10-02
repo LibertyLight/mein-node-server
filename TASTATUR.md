@@ -18,21 +18,22 @@ Zugangswort, das nur für diese Route gilt.
 | --- | --- |
 | QWERTZ mit ü ö ä, Zahlenreihe, Langdruck-Sonderzeichen | ✅ inkl. Hinweiszeichen oben rechts |
 | Symbolseiten 1/2 und 2/2 | ✅ |
-| Wortvorschläge, Lernen eigener Wörter, Folgewort | ✅ auf dem Gerät, langes Tippen auf einen Vorschlag vergisst ihn |
-| Tippfehler-Vorschläge | ✅ als Vorschlag (keine automatische Korrektur) |
+| Wortvorschläge, Lernen eigener Wörter, Folgewort | ✅ auf dem Gerät, ~66.000 Wörter, langes Tippen auf einen Vorschlag vergisst ihn |
+| Autokorrektur | ✅ bei Leertaste/Satzzeichen; ⌫ direkt danach macht sie rückgängig |
 | Auto-Großschreibung, Doppel-Leertaste = Punkt | ✅ |
 | Cursor per Wischen über die Leertaste | ✅ |
 | Emojis mit „Zuletzt verwendet“ | ✅ |
 | Zwischenablage-Verlauf | ✅ ohne Passwortfelder und als vertraulich markierte Inhalte |
 | Textbearbeitung (Pfeile, Markieren, Kopieren …) | ✅ |
 | Einhandmodus, Höhe, Hell/Dunkel | ✅ |
+| Buchstabengröße, Tasten in Großbuchstaben | ✅ |
 | Spracheingabe | ✅ über die Spracherkennung des Geräts |
 | **Schreibhilfe: Ton ändern** (Professionell, Locker, Höflich, Social Media, Emojis) | ✅ Claude |
 | **Rechtschreibung & Grammatik** | ✅ Claude |
 | **Zusammenfassen**, **Stichpunkte** | ✅ Claude |
 | **Übersetzen** (Chat-Übersetzung) | ✅ 12 Sprachen, Claude |
 | **Verfassen** aus Stichworten (Composer) | ✅ Nachricht, E-Mail, Social-Post |
-| Wischen zum Schreiben (Swype) | ❌ noch nicht |
+| Wischen zum Schreiben (Swype) | ❌ bewusst weggelassen |
 | Handschrift, Sticker, GIFs, Bitmoji | ❌ |
 | Antwortvorschläge zu *empfangenen* Nachrichten | ❌ eine Tastatur sieht fremde Chat-Inhalte nicht |
 | KI ohne Internet direkt auf dem Gerät | ❌ (Samsung nutzt dafür ein eigenes On-Device-Modell) |
@@ -88,6 +89,31 @@ deinen Server, wenn du in der Schreibhilfe eine Aktion antippst.
 - Server **woanders**: nur per **HTTPS**, z. B. hinter einem Reverse-Proxy oder
   Tunnel. Unverschlüsseltes HTTP erlaubt die App bewusst nur zu `127.0.0.1`,
   denn sonst ginge das Zugangswort im Klartext durchs Netz.
+
+## Autokorrektur
+
+Korrigiert wird, sobald ein Wort mit Leertaste, Satzzeichen oder Enter endet.
+Was gleich eingesetzt wird, steht **fett** in der Vorschlagsleiste.
+
+- **⌫ direkt danach** holt dein getipptes Wort zurück. Die Tastatur merkt es
+  sich und korrigiert es nicht wieder.
+- **Getipptes Wort antippen** (ganz links in der Leiste) übernimmt es so, wie
+  es ist, und merkt es sich ebenfalls.
+- Erkannt werden typische Fehler: Nachbartasten auf QWERTZ, vertauschte
+  Buchstaben, vergessene oder verdoppelte Buchstaben, fehlende Umlaute
+  („fur“ → „für“).
+- Nicht korrigiert wird: in Adress-, E-Mail- und Passwortfeldern, nach
+  `@`, `#` oder `/`, Wörter mit Ziffern, Abkürzungen in GROSSBUCHSTABEN und
+  Wörter, die nur eine Endung an ein bekanntes Wort hängen („Dorfs“).
+  Großgeschriebene Wörter mitten im Satz (oft Namen) werden nur bei kleinen
+  Fehlern korrigiert.
+- Ein Wort, das du zweimal unkorrigiert schreibst, gilt als bekannt.
+
+Bei sehr seltenen echten Wörtern (meist Namen) liegt die Fehlkorrekturrate in
+Tests bei etwa 9 %. Dann einmal ⌫, ab da kennt die Tastatur das Wort.
+Ausschalten lässt sich die Autokorrektur in den Einstellungen.
+
+Herkunft der Wortliste: siehe `tastatur/WOERTERLISTE.md`.
 
 ## Bedienung
 

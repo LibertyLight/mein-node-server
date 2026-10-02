@@ -47,6 +47,12 @@ class TastenfeldView(context: Context, private val zuhoerer: Zuhoerer) : View(co
         set(v) { field = v; invalidate() }
     var hoehenFaktor = 1f
         set(v) { field = v; requestLayout() }
+    /** Groesse der Beschriftung, unabhaengig von der Tastenhoehe (1 = Vorgabe). */
+    var schriftFaktor = 1f
+        set(v) { field = v; invalidate() }
+    /** Buchstaben immer gross beschriften (geschrieben wird trotzdem klein, wie bei Samsung). */
+    var grossBeschriftung = false
+        set(v) { field = v; invalidate() }
     var vibration = true
 
     private val dichte = resources.displayMetrics.density
@@ -57,6 +63,8 @@ class TastenfeldView(context: Context, private val zuhoerer: Zuhoerer) : View(co
     private val plaetze = ArrayList<Platz>()
     private val farbe = Paint(Paint.ANTI_ALIAS_FLAG)
     private val schrift = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
+    private val schriftBuchstabe = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+    private val schriftSonder = Typeface.create("sans-serif-medium", Typeface.BOLD)
     private val zeiger = Handler(Looper.getMainLooper())
 
     // Zustand der aktuellen Beruehrung
@@ -106,7 +114,7 @@ class TastenfeldView(context: Context, private val zuhoerer: Zuhoerer) : View(co
     // ---------- Zeichnen ----------
 
     private fun beschriftung(taste: Taste): String = when (taste.art) {
-        Art.ZEICHEN -> if (umschalt != Umschalt.AUS && taste.text.length == 1) TextLogik.gross(taste.text) else taste.text
+        Art.ZEICHEN -> if ((umschalt != Umschalt.AUS || grossBeschriftung) && taste.text.length == 1) TextLogik.gross(taste.text) else taste.text
         Art.SHIFT -> if (umschalt == Umschalt.FEST) "⇪" else "⇧"
         Art.ENTER -> enterText
         else -> taste.text
@@ -129,17 +137,20 @@ class TastenfeldView(context: Context, private val zuhoerer: Zuhoerer) : View(co
             val hervorgehoben = t.art == Art.ENTER || (t.art == Art.SHIFT && umschalt != Umschalt.AUS)
             schrift.color = if (hervorgehoben) thema.akzentText else if (t.art == Art.LEER) thema.textLeise else thema.text
             val text = beschriftung(t)
-            schrift.typeface = if (t.art == Art.ZEICHEN) Typeface.DEFAULT else Typeface.DEFAULT_BOLD
+            schrift.typeface = if (t.art == Art.ZEICHEN) schriftBuchstabe else schriftSonder
+            // Nie groesser als 70 % der Taste, sonst stoesst die Schrift an den Rand
+            val hoechstens = platz.rect.height() * 0.7f
             schrift.textSize = when {
-                t.art == Art.LEER -> 13 * dichte
-                text.length > 2 -> 15 * dichte
-                else -> 21 * dichte * hoehenFaktor.coerceIn(0.85f, 1.15f)
-            }
+                t.art == Art.LEER -> 14 * dichte * schriftFaktor.coerceAtMost(1.2f)
+                text.length > 2 -> 16 * dichte * schriftFaktor.coerceAtMost(1.2f)
+                t.art != Art.ZEICHEN -> 24 * dichte * schriftFaktor
+                else -> 27 * dichte * schriftFaktor
+            }.coerceAtMost(hoechstens)
             canvas.drawText(text, platz.rect.centerX(), platz.rect.centerY() - (schrift.descent() + schrift.ascent()) / 2, schrift)
 
             if (t.hinweis.isNotEmpty()) {
                 schrift.color = thema.textLeise
-                schrift.textSize = 10 * dichte
+                schrift.textSize = 11 * dichte * schriftFaktor.coerceAtMost(1.25f)
                 schrift.typeface = Typeface.DEFAULT
                 canvas.drawText(t.hinweis, platz.rect.right - 7 * dichte, platz.rect.top + 12 * dichte, schrift)
             }
@@ -160,8 +171,8 @@ class TastenfeldView(context: Context, private val zuhoerer: Zuhoerer) : View(co
                 canvas.drawRoundRect(RectF(links + 2, auswahlRect.top + 2, links + zelle - 2, auswahlRect.bottom - 2), radius, radius, farbe)
             }
             schrift.color = if (i == auswahlIndex) thema.akzentText else thema.text
-            schrift.textSize = 20 * dichte
-            schrift.typeface = Typeface.DEFAULT
+            schrift.textSize = (25 * dichte * schriftFaktor).coerceAtMost(auswahlRect.height() * 0.7f)
+            schrift.typeface = schriftBuchstabe
             val text = if (umschalt != Umschalt.AUS) TextLogik.gross(zeichen) else zeichen
             canvas.drawText(text, links + zelle / 2, auswahlRect.centerY() - (schrift.descent() + schrift.ascent()) / 2, schrift)
         }
