@@ -10,9 +10,12 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
+import android.graphics.drawable.GradientDrawable
+import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import android.widget.PopupWindow
 import kotlin.math.abs
 
 enum class Umschalt { AUS, EINMAL, FEST }
@@ -92,8 +95,9 @@ class TastenfeldView(context: Context, private val zuhoerer: Zuhoerer) : View(co
     private var leerVersatz = 0
     private var langGedrueckt = false
     private var auswahl: List<String> = emptyList()
-    private var auswahlRect = RectF()
     private var auswahlIndex = 0
+    private var auswahlFenster: PopupWindow? = null
+    private var auswahlAnsicht: AuswahlAnsicht? = null
     private var loeschTempo = 0
 
     private val langDruck = Runnable { langerDruck() }
@@ -194,7 +198,6 @@ class TastenfeldView(context: Context, private val zuhoerer: Zuhoerer) : View(co
                 canvas.drawText(t.hinweis, platz.rect.right - 0.13f * platz.rect.width(), platz.rect.top + 0.24f * tasteHoehe, schrift)
             }
         }
-        if (langGedrueckt && auswahl.isNotEmpty()) zeichneAuswahl(canvas)
     }
 
     private fun zeichneText(canvas: Canvas, t: Taste, rect: RectF, textFarbe: Int) {
@@ -299,24 +302,69 @@ class TastenfeldView(context: Context, private val zuhoerer: Zuhoerer) : View(co
         canvas.restore()
     }
 
-    private fun zeichneAuswahl(canvas: Canvas) {
-        farbe.color = thema.sonder
-        farbe.setShadowLayer(6 * dichte, 0f, 2 * dichte, 0x55000000)
-        canvas.drawRoundRect(auswahlRect, luecke, luecke, farbe)
-        farbe.clearShadowLayer()
-        val zelle = auswahlRect.width() / auswahl.size
-        auswahl.forEachIndexed { i, zeichen ->
-            val links = auswahlRect.left + i * zelle
-            if (i == auswahlIndex) {
-                farbe.color = thema.akzent
-                canvas.drawRoundRect(RectF(links + 2, auswahlRect.top + 2, links + zelle - 2, auswahlRect.bottom - 2), luecke, luecke, farbe)
-            }
-            schrift.color = if (i == auswahlIndex) thema.akzentText else thema.text
-            schrift.textSize = (0.42f * tasteHoehe * schriftFaktor).coerceAtMost(auswahlRect.height() * 0.7f)
-            schrift.typeface = schriftBuchstabe
-            val text = if (umschalt != Umschalt.AUS) TextLogik.gross(zeichen) else zeichen
-            canvas.drawText(text, links + zelle / 2, auswahlRect.centerY() - (schrift.descent() + schrift.ascent()) / 2, schrift)
+    /**
+     * Die Auswahl beim langen Drücken: ein eigenes Fenster über dem Finger. In die View selbst gezeichnet
+     * würde sie bei der obersten Reihe genau die Taste verdecken, die gerade gedrückt wird.
+     */
+    private inner class AuswahlAnsicht(context: Context, private val zeichen: List<String>, private val zelle: Float) : View(context) {
+        var index = 0
+            set(v) { if (field != v) { field = v; invalidate() } }
+        private val farbe = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER; typeface = schriftBuchstabe }
+
+        init {
+            background = GradientDrawable().apply { setColor(thema.sonder); cornerRadius = luecke }
+            elevation = 8 * dichte
         }
+
+        override fun onDraw(canvas: Canvas) {
+            zeichen.forEachIndexed { i, z ->
+                val links = i * zelle
+                if (i == index) {
+                    farbe.color = thema.akzent
+                    canvas.drawRoundRect(RectF(links + 3 * dichte, 3 * dichte, links + zelle - 3 * dichte, height - 3 * dichte), luecke, luecke, farbe)
+                }
+                text.color = if (i == index) thema.akzentText else thema.text
+                text.textSize = 0.42f * tasteHoehe * schriftFaktor
+                val anzeige = if (umschalt != Umschalt.AUS) TextLogik.gross(z) else z
+                canvas.drawText(anzeige, links + zelle / 2, height / 2f - (text.descent() + text.ascent()) / 2, text)
+            }
+        }
+    }
+
+    private fun zeigeAuswahl(platz: Platz) {
+        val zelle = maxOf(platz.rect.width(), 40 * dichte)
+        val breite = zelle * auswahl.size
+        val ansicht = AuswahlAnsicht(context, auswahl, zelle).also { it.index = auswahlIndex }
+        val fenster = PopupWindow(ansicht, breite.toInt(), tasteHoehe.toInt(), false).apply {
+            isTouchable = false
+            isClippingEnabled = false
+            setBackgroundDrawable(null)
+        }
+        val ort = IntArray(2)
+        getLocationOnScreen(ort)
+        val links = (platz.rect.centerX() - zelle / 2).coerceIn(0f, maxOf(0f, width - breite))
+        val oben = platz.rect.top - tasteHoehe - lueckeHoch
+        try {
+            fenster.showAtLocation(this, Gravity.NO_GRAVITY, ort[0] + links.toInt(), ort[1] + oben.toInt())
+            auswahlFenster = fenster
+            auswahlAnsicht = ansicht
+        } catch (_: Exception) {
+            // Fenster nicht moeglich (z. B. Tastatur gerade geschlossen): ohne Auswahl weitermachen
+            auswahl = emptyList()
+        }
+        // Breite der Zellen fuer die Zuordnung der Fingerposition merken
+        auswahlLinks = ort[0] + links
+        auswahlZelle = zelle
+    }
+
+    private var auswahlLinks = 0f
+    private var auswahlZelle = 1f
+
+    private fun schliesseAuswahl() {
+        try { auswahlFenster?.dismiss() } catch (_: Exception) {}
+        auswahlFenster = null
+        auswahlAnsicht = null
     }
 
     // ---------- Beruehrung ----------
@@ -380,9 +428,10 @@ class TastenfeldView(context: Context, private val zuhoerer: Zuhoerer) : View(co
     private fun bewege(x: Float, y: Float) {
         val platz = aktiv ?: return
         if (langGedrueckt && auswahl.isNotEmpty()) {
-            val zelle = auswahlRect.width() / auswahl.size
-            auswahlIndex = ((x - auswahlRect.left) / zelle).toInt().coerceIn(0, auswahl.size - 1)
-            invalidate()
+            val ort = IntArray(2)
+            getLocationOnScreen(ort)
+            auswahlIndex = (((ort[0] + x) - auswahlLinks) / auswahlZelle).toInt().coerceIn(0, auswahl.size - 1)
+            auswahlAnsicht?.index = auswahlIndex
             return
         }
         if (platz.taste.art == Art.LEER) {
@@ -410,11 +459,7 @@ class TastenfeldView(context: Context, private val zuhoerer: Zuhoerer) : View(co
         langGedrueckt = true
         auswahl = alternativen
         auswahlIndex = 0
-        val zelle = maxOf(platz.rect.width(), 40 * dichte)
-        val breite = zelle * auswahl.size
-        val links = (platz.rect.centerX() - zelle / 2).coerceIn(luecke, maxOf(luecke, width - breite - luecke))
-        val oben = (platz.rect.top - tasteHoehe - lueckeHoch).coerceAtLeast(0f)
-        auswahlRect = RectF(links, oben, links + breite, oben + tasteHoehe)
+        zeigeAuswahl(platz)
         rueckmeldung()
         invalidate()
     }
@@ -423,6 +468,7 @@ class TastenfeldView(context: Context, private val zuhoerer: Zuhoerer) : View(co
         val platz = aktiv
         zeiger.removeCallbacks(langDruck)
         zeiger.removeCallbacks(loeschWiederholung)
+        schliesseAuswahl()
         aktiv = null
         zeigerId = -1
         if (platz != null && !abbrechen) {
@@ -451,6 +497,7 @@ class TastenfeldView(context: Context, private val zuhoerer: Zuhoerer) : View(co
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        schliesseAuswahl()
         zeiger.removeCallbacksAndMessages(null)
     }
 }

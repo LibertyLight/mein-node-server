@@ -1,229 +1,400 @@
 package de.libertylight.tastatur
 
 import kotlin.math.ln
+import kotlin.math.max
+import kotlin.math.min
+
+/** Das Wort vor dem aktuellen -- und ob gerade ein Satz beginnt. */
+data class Kontext(val wort: String = "", val satzanfang: Boolean = false) {
+    companion object {
+        val KEINER = Kontext()
+        val SATZANFANG = Kontext(satzanfang = true)
+    }
+}
+
+/** Was die Vorschlagsleiste zeigt, und was die Leertaste einsetzen würde. */
+data class Vorschlaege(val liste: List<String>, val korrektur: String?)
 
 /**
- * Wortvorschlaege und Autokorrektur: ein Grundwortschatz (nach Haeufigkeit sortiert)
- * plus alles, was beim Tippen gelernt wird.
+ * Vorschläge und Autokorrektur.
  *
- * - Vervollstaendigung: Woerter, die mit dem Getippten beginnen
- * - Korrektur: das wahrscheinlichste Wort mit kleinem Tippfehler-Abstand
- * - Folgewort: was du nach dem vorherigen Wort oft schreibst
+ * Für ein getipptes, unbekanntes Wort wird gerechnet, welches Wort am wahrscheinlichsten gemeint war:
  *
- * Gespeichert wird nur auf dem Geraet, als einfache Textzeilen ueber [speicher].
+ *     wahrscheinlichkeit(Wort | davor)  -  Kosten, dass sich daraus das Getippte ergibt
+ *
+ * Die Kosten kommen aus dem [Fehlermodell] -- Nachbartasten, wo der Finger wirklich aufsetzte,
+ * vertauschte oder vergessene Buchstaben. Dagegen steht, wie wahrscheinlich es ist, dass das Getippte
+ * ein echtes Wort ist, das nur nicht in der Liste steht: ein Name, eine Zusammensetzung oder eine
+ * gebeugte Form. Korrigiert wird nur, wenn der beste Kandidat deutlich vorn liegt.
+ *
+ * Gelernt wird nur auf dem Gerät und über [speicher].
  */
 class Woerterbuch(
-    grundwortschatz: List<String>,
+    private val modell: Sprachmodell,
     private val speicher: Speicher,
+    karte: Tastenkarte = Tastenkarte.STANDARD,
+    private val p: Parameter = Parameter(),
 ) {
     interface Speicher {
         fun lies(): String?
         fun schreib(inhalt: String)
     }
 
-    /** Rang im Grundwortschatz (0 = haeufigstes Wort), Schluessel klein geschrieben. */
-    private val rang = HashMap<String, Int>(grundwortschatz.size * 2)
-    /** Nur Woerter, deren Schreibweise vom Schluessel abweicht (Nomen) -- spart Speicher. */
-    private val grossform = HashMap<String, String>()
-    /** Alphabetisch sortiert, fuer schnelle Praefixsuche. */
-    private val sortiert: Array<String>
-    /** Schluessel nach Laenge, fuer die Korrektursuche. */
-    private val nachLaenge = Array(MAX_LAENGE + 1) { ArrayList<String>() }
-    /** Haeufigkeitspunkte je Rang, vorberechnet (0 = selten, 10 = sehr haeufig). */
-    private val basis: FloatArray
+    private var fehler = Fehlermodell(karte, p)
+    private val suche = FuzzySuche(modell, p)
+
+    /** Substantive bei der Autokorrektur großschreiben ("haus" -> "Haus"). */
+    var substantiveGross = true
 
     private val gelernt = HashMap<String, Pair<String, Int>>()
     private val folgen = HashMap<String, HashMap<String, Int>>()
+    private val bestaetigt = HashSet<String>()
     private var ungespeichert = 0
+    private var nutzerNeu: List<String>? = null
 
-    init {
-        for (eintrag in grundwortschatz) {
-            val w = eintrag.trim()
-            if (w.isEmpty() || w.length > MAX_LAENGE) continue
-            val k = w.lowercase()
-            if (k in rang) continue
-            rang[k] = rang.size
-            if (w != k) grossform[k] = w
-            nachLaenge[k.length].add(k)
-        }
-        sortiert = rang.keys.toTypedArray().also { it.sort() }
-        val logGroesse = ln(rang.size + 2.0)
-        basis = FloatArray(rang.size) { (10.0 * (1.0 - ln(it + 1.0) / logGroesse)).toFloat() }
-        lade()
+    init { lade() }
+
+    /** Wo die Tasten gerade liegen (ändert sich bei Querformat oder eigenen Umlauttasten). */
+    fun setzeKarte(neu: Tastenkarte) {
+        fehler = Fehlermodell(neu, p)
+        merkSchluessel = ""
     }
 
-    /** 0 (selten/unbekannt) bis 10 (sehr haeufig), dazu Bonus fuers Gelernte. */
-    private fun punkte(k: String): Double {
-        val r = rang[k]
-        val grund = if (r == null) 0.0 else basis[r].toDouble()
-        val g = gelernt[k]?.second ?: 0
-        return grund + if (g > 0) 4.0 + ln(g.toDouble()) * 2 else 0.0
+    // ================================================================ Abfragen
+
+    /** Ist das Wort bekannt, also in der Wortliste oder vom Nutzer mindestens zweimal geschrieben? */
+    fun kennt(wort: String): Boolean {
+        val klein = wort.lowercase()
+        return modell.index(klein) >= 0 || (gelernt[klein]?.second ?: 0) >= 2
     }
 
-    private fun schreibweise(k: String): String = gelernt[k]?.first ?: grossform[k] ?: k
-
-    fun kennt(wort: String): Boolean = wort.lowercase().let { it in rang || it in gelernt }
-
-    /** Alle Schluessel mit diesem Praefix: Grundwortschatz per Binaersuche, dazu das Gelernte. */
-    private fun mitPraefix(klein: String): Sequence<String> {
-        var lo = 0
-        var hi = sortiert.size
-        while (lo < hi) {
-            val mitte = (lo + hi) ushr 1
-            if (sortiert[mitte] < klein) lo = mitte + 1 else hi = mitte
-        }
-        val grund = generateSequence(lo) { it + 1 }
-            .takeWhile { it < sortiert.size && sortiert[it].startsWith(klein) }
-            .map { sortiert[it] }
-        return grund + gelernt.keys.asSequence().filter { it.startsWith(klein) && it !in rang }
+    private fun kontextNr(k: Kontext): Int = when {
+        k.satzanfang -> Sprachmodell.SATZANFANG_NR
+        k.wort.isEmpty() -> -1
+        else -> modell.index(k.wort.lowercase())
     }
 
-    // Die Leiste fragt bei jedem Tastendruck, die Leertaste gleich danach noch einmal:
-    // das letzte Ergebnis merken. Jede Aenderung am Gelernten macht es ungueltig.
+    private fun nutzerBonus(klein: String, vorherKlein: String): Double {
+        var b = 0.0
+        val g = gelernt[klein]?.second ?: 0
+        if (g > 0) b += min(p.nutzerWortMax, p.nutzerWort + p.nutzerWortLog * ln(g.toDouble()))
+        val f = folgen[vorherKlein]?.get(klein)
+        if (f != null) b += min(4.0, p.nutzerFolge + 0.7 * ln(f.toDouble()))
+        return b
+    }
+
+    /** ln Wahrscheinlichkeit eines Wortes aus der Liste in diesem Zusammenhang. */
+    private fun bewerte(idx: Int, ctxNr: Int, vorherKlein: String): Double {
+        val uni = modell.lnP(idx)
+        var s = uni
+        val f = modell.folgeLnP(ctxNr, idx)
+        if (f != null) s += min(p.folgeMax, p.folgeGewicht * max(0.0, f - uni))
+        return s + nutzerBonus(modell.schluessel[idx], vorherKlein)
+    }
+
+    private fun bewerteNutzerWort(klein: String, vorherKlein: String): Double =
+        p.nutzerUnbekanntLnP + nutzerBonus(klein, vorherKlein)
+
+    private fun nutzerNeueWoerter(): List<String> =
+        nutzerNeu ?: gelernt.keys.filter { modell.index(it) < 0 }.also { nutzerNeu = it }
+
+    // ================================================================ Korrektur
+
+    private class Kandidat(val text: String, val bewertung: Double, val kosten: Float)
+
+    private class Entscheidung(val korrektur: String?, val alternativen: List<Kandidat>, val vorsprung: Double)
+
     private var merkSchluessel = ""
-    private var merkKandidaten: List<Pair<String, Float>> = emptyList()
+    private var merkEntscheidung = Entscheidung(null, emptyList(), 0.0)
 
-    /** Korrekturkandidaten mit ihrem Tippfehler-Abstand. */
-    private fun kandidaten(klein: String, grenze: Float): List<Pair<String, Float>> {
-        val schluessel = "$klein|$grenze"
-        if (schluessel == merkSchluessel) return merkKandidaten
-        return sucheKandidaten(klein, grenze).also { merkSchluessel = schluessel; merkKandidaten = it }
+    private fun spurCode(spur: List<Anschlag?>?): Int {
+        var h = 17
+        spur?.forEach { a -> h = h * 31 + (a?.let { (it.x * 40).toInt() * 997 + (it.y * 40).toInt() } ?: 0) }
+        return h
     }
 
-    private fun sucheKandidaten(klein: String, grenze: Float): List<Pair<String, Float>> {
-        val ergebnis = ArrayList<Pair<String, Float>>()
-        // Doppelbuchstaben kosten nur 0,5 -- die Laenge darf also um bis zu 2 x Grenze abweichen
-        val spanne = (grenze * 2).toInt()
-        val von = (klein.length - spanne).coerceAtLeast(1)
-        val bis = (klein.length + spanne).coerceAtMost(MAX_LAENGE)
-        // Der erste Buchstabe ist fast immer richtig getroffen. Erlaubt sind nur: derselbe,
-        // sein Umlaut, oder vertauscht/vergessen (dann passt der zweite Buchstabe).
-        val erster = klein[0]
-        val zweiter = klein.getOrElse(1) { erster }
-        val umlaut = UMLAUTE[erster] ?: erster
-        for (laenge in von..bis) {
-            for (k in nachLaenge[laenge]) {
-                val k0 = k[0]
-                if (k0 != erster && k0 != umlaut && k0 != zweiter && (k.length < 2 || k[1] != erster)) continue
-                val d = TextLogik.tippAbstand(klein, k, grenze)
-                if (d <= grenze) ergebnis += k to d
-            }
-        }
-        for (k in gelernt.keys) {
-            if (k in rang) continue
-            val d = TextLogik.tippAbstand(klein, k, grenze)
-            if (d <= grenze) ergebnis += k to d
-        }
-        return ergebnis
-    }
-
-    private fun korrekturPunkte(k: String, abstand: Float, getippt: String, folge: Map<String, Int>): Double {
-        var p = punkte(k) - abstand * 10.0 + (folge[k] ?: 0) * 3.0
-        // Der erste Buchstabe ist selten falsch
-        if (k.firstOrNull() == getippt.firstOrNull()) p += 1.5
-        return p
-    }
-
-    /**
-     * Die Korrektur, die beim Leerzeichen eingesetzt wird -- oder null, wenn das Wort
-     * bekannt ist oder es keinen ueberzeugenden Kandidaten gibt.
-     */
-    fun korrektur(wort: String, vorher: String = ""): String? {
-        if (!sollKorrigieren(wort)) return null
-        val klein = wort.lowercase()
-        val folge = folgen[vorher.lowercase()] ?: emptyMap()
-        val (k, _) = kandidaten(klein, grenzeFuer(wort, vorher))
-            // Seltene Woerter nur bei sehr kleinem Fehler einsetzen
-            .filter { (k, d) -> punkte(k) >= 2.0 || d <= 0.7f }
-            // "Dorfs", "gesehener": bekanntes Wort plus Endung ist meist eine Beugung, kein Fehler
-            .filter { (k, _) -> !(klein.startsWith(k) && klein.length - k.length <= 3) }
-            .maxByOrNull { (k, d) -> korrekturPunkte(k, d, klein, folge) } ?: return null
-        return TextLogik.passeSchreibungAn(schreibweise(k), wort)
-    }
-
-    private fun grenzeFuer(wort: String, vorher: String): Float {
-        val grenze = TextLogik.fehlerGrenze(wort.length)
-        // Grossgeschrieben mitten im Satz ist oft ein Name: nur kleine Fehler korrigieren
-        return if (wort[0].isUpperCase() && vorher.isNotEmpty()) minOf(grenze, 1f) else grenze
-    }
-
-    private fun sollKorrigieren(wort: String): Boolean {
-        if (wort.length < 3 || wort.length > MAX_LAENGE) return false
-        // Einmal getippt reicht nicht: sonst waere jeder unkorrigierte Tippfehler "bekannt".
-        // Ab zweimal (oder bewusst bestaetigt) gilt ein eigenes Wort als richtig.
-        val klein = wort.lowercase()
-        if (klein in rang || (gelernt[klein]?.second ?: 0) >= 2) return false
-        if (wort.any { it.isDigit() }) return false
-        // GROSS geschriebene Abkuerzungen und BinnenMajuskeln (Namen, Marken) in Ruhe lassen
-        if (wort.drop(1).any { it.isUpperCase() }) return false
+    private fun darfKorrigiert(wort: String): Boolean {
+        if (wort.length < p.minLaenge || wort.length > FuzzySuche.MAX_LAENGE) return false
+        if (!wort.all { it.isLetter() }) return false
+        if (wort.length >= 2 && wort.all { it.isUpperCase() }) return false
+        // Binnenmajuskeln (McDonald, iPhone) lassen; "IMmer" (Umschalttaste zu lange) ist erlaubt
+        if (!zweiGross(wort) && wort.drop(1).any { it.isUpperCase() }) return false
         return true
     }
 
-    /**
-     * Bis zu [anzahl] Vorschlaege. Bei leerem [praefix] kommen Folgewoerter zu [vorher].
-     * Das Getippte steht vorn; eine Autokorrektur direkt dahinter.
-     */
-    fun vorschlaege(praefix: String, vorher: String = "", anzahl: Int = 3): List<String> {
-        if (praefix.isEmpty()) {
-            val nachfolger = folgen[vorher.lowercase()] ?: return emptyList()
-            return nachfolger.entries.sortedByDescending { it.value }.take(anzahl).map { schreibweise(it.key) }
+    private fun zweiGross(wort: String) =
+        wort.length >= 3 && wort[0].isUpperCase() && wort[1].isUpperCase() && wort.drop(2).none { it.isUpperCase() }
+
+    private fun grossErstes(s: String) = s.replaceFirstChar { it.uppercaseChar() }
+
+    /** Das Wort ist bekannt -- höchstens die Groß-/Kleinschreibung wird angepasst. */
+    private fun schreibweiseKorrigieren(wort: String, klein: String, idx: Int): String? {
+        if (zweiGross(wort)) {
+            // "IMmer": Umschalttaste zu lange gehalten
+            return if (idx >= 0 && modell.istSubstantiv(idx)) modell.schreibweise(idx) else grossErstes(klein)
         }
-
-        val klein = praefix.lowercase()
-        val ergebnis = LinkedHashSet<String>()
-        ergebnis += praefix
-        korrektur(praefix, vorher)?.let { ergebnis += it }
-
-        val folge = folgen[vorher.lowercase()] ?: emptyMap()
-        // Bei kurzen Praefixen sind es tausende Treffer -- die besten per Teilsortierung
-        mitPraefix(klein)
-            .filter { it.length > klein.length }
-            .sortedByDescending { punkte(it) + (folge[it] ?: 0) * 3.0 }
-            .take(anzahl)
-            .forEach { ergebnis += TextLogik.passeSchreibungAn(schreibweise(it), praefix) }
-
-        if (ergebnis.size < anzahl && klein.length >= 3) {
-            kandidaten(klein, grenzeFuer(praefix, vorher))
-                .filter { it.first != klein }
-                .sortedByDescending { (k, d) -> korrekturPunkte(k, d, klein, folge) }
-                .take(anzahl)
-                .forEach { ergebnis += TextLogik.passeSchreibungAn(schreibweise(it.first), praefix) }
-        }
-        return ergebnis.distinctBy { it.lowercase() }.take(anzahl)
+        if (!substantiveGross || wort != klein || wort in bestaetigt) return null
+        return if (idx >= 0 && modell.grossAnteil(idx) >= p.substantivSchwelle) grossErstes(modell.schreibweise(idx)) else null
     }
+
+    private fun entscheide(wort: String, k: Kontext, spur: List<Anschlag?>?): Entscheidung {
+        val schluessel = "$wort|${k.wort}|${k.satzanfang}|${spurCode(spur)}|${gelernt.size}|${bestaetigt.size}"
+        if (schluessel == merkSchluessel) return merkEntscheidung
+        val ergebnis = rechne(wort, k, spur)
+        merkSchluessel = schluessel
+        merkEntscheidung = ergebnis
+        return ergebnis
+    }
+
+    private fun rechne(wort: String, k: Kontext, spur: List<Anschlag?>?): Entscheidung {
+        val leer = Entscheidung(null, emptyList(), 0.0)
+        if (wort.isEmpty() || !darfKorrigiert(wort)) return leer
+        val klein = wort.lowercase()
+        val idx = modell.index(klein)
+        val bekannt = idx >= 0 || (gelernt[klein]?.second ?: 0) >= 2
+        if (bekannt) return Entscheidung(schreibweiseKorrigieren(wort, klein, idx), emptyList(), 0.0)
+        if (wort in bestaetigt) return leer
+
+        val vorherKlein = k.wort.lowercase()
+        val ctx = kontextNr(k)
+        val typ = klein.toCharArray()
+        val ersetz = fehler.ersetzTabelle(typ, spur)
+        val ins = fehler.einfuegenKosten(typ)
+
+        val kandidaten = ArrayList<Kandidat>()
+        for (t in suche.suche(typ, ersetz, ins, p.suchGrenze)) {
+            kandidaten += Kandidat(angleichen(modell.schreibweise(t.index), wort), bewerte(t.index, ctx, vorherKlein) - t.kosten, t.kosten)
+        }
+        for (w in nutzerNeueWoerter()) {
+            val kosten = suche.kosten(typ, ersetz, ins, w)
+            if (kosten <= p.suchGrenze) {
+                kandidaten += Kandidat(angleichen(gelernt.getValue(w).first, wort), bewerteNutzerWort(w, vorherKlein) - kosten, kosten)
+            }
+        }
+        trennen(klein, wort, ctx, vorherKlein)?.let { kandidaten += it }
+        if (kandidaten.isEmpty()) return leer
+
+        kandidaten.sortByDescending { it.bewertung }
+        val behalten = behalten(wort, klein, k)
+        val bester = kandidaten[0]
+        val vorsprung = bester.bewertung - behalten
+        return Entscheidung(if (vorsprung > p.rand) bester.text else null, kandidaten, vorsprung)
+    }
+
+    /** Das Ergebnis übernimmt die Großschreibung des Getippten; ein Substantiv bleibt groß. */
+    private fun angleichen(vorschlag: String, getippt: String): String =
+        if (getippt[0].isUpperCase()) grossErstes(vorschlag)
+        else if (!substantiveGross && vorschlag[0].isUpperCase()) vorschlag.replaceFirstChar { it.lowercaseChar() }
+        else vorschlag
+
+    /**
+     * Wie wahrscheinlich ist es, dass das Getippte ein echtes Wort ist, das nur nicht in der Liste steht?
+     * Ein typisches unbekanntes Wort hat [Parameter.unbekanntLnP], egal wie lang es ist. Darauf kommt, was
+     * auf einen Namen, eine Zusammensetzung oder eine gebeugte Form hindeutet.
+     */
+    private fun behalten(wort: String, klein: String, k: Kontext): Double {
+        var s = p.unbekanntLnP
+        if (wort[0].isUpperCase() && !k.satzanfang) s += p.namenBonus
+        if (istZusammensetzung(klein, 0)) s += p.kompositumBonus
+        if (istBeugung(klein)) s += p.beugungsBonus
+        return s
+    }
+
+    private val endungen = setOf("s", "es", "e", "en", "er", "em", "n", "ns", "ens", "ern", "t", "te", "ten", "tem", "ter", "tes", "st", "in", "innen", "ung", "heit", "keit")
+
+    /**
+     * Gebeugte Form eines bekannten Wortes: bekanntes Wort plus Endung ("Gegenstands"), oder ein
+     * bekanntes Wort ist das Getippte plus Endung ("verkeilt" -> "verkeilte"). Das ist selten ein Tippfehler.
+     */
+    private fun istBeugung(klein: String): Boolean {
+        if (klein.length < 5) return false
+        for (e in endungen) {
+            if (klein.length - e.length >= 4 && klein.endsWith(e) && modell.index(klein.dropLast(e.length)) >= 0) return true
+        }
+        var gesehen = 0
+        for (i in modell.praefixBereich(klein)) {
+            if (++gesehen > 60) break
+            val rest = modell.schluessel[i].substring(klein.length)
+            if (rest.isNotEmpty() && rest in endungen) return true
+        }
+        return false
+    }
+
+    /** "ichhabe" -> "ich habe": zwei häufige Wörter ohne Leerzeichen dazwischen. */
+    private fun trennen(klein: String, wort: String, ctx: Int, vorherKlein: String): Kandidat? {
+        if (klein.length < 4) return null
+        var bester: Kandidat? = null
+        for (s in 2..klein.length - 2) {
+            val a = klein.substring(0, s)
+            val b = klein.substring(s)
+            val ia = modell.index(a)
+            val ib = modell.index(b)
+            if (ia < 0 || ib < 0) continue
+            if (a.length == 2 && !modell.istFunktionswort(ia)) continue
+            if (b.length < 3) continue   // sonst wird jedes Wort auf -in, -er, -es "getrennt"
+            // zwei Substantive sind eine Zusammensetzung, kein Tippfehler
+            if (modell.istSubstantiv(ia) && modell.istSubstantiv(ib)) continue
+            val bewertung = bewerte(ia, ctx, vorherKlein) + bewerte(ib, ia, a) - p.kostenLeerzeichen
+            if (bester == null || bewertung > bester.bewertung) {
+                bester = Kandidat(angleichen(modell.schreibweise(ia), wort) + " " + modell.schreibweise(ib), bewertung, p.kostenLeerzeichen.toFloat())
+            }
+        }
+        return bester
+    }
+
+    private val fugen = listOf("", "s", "es", "n", "en", "e", "er")
+
+    /** Besteht das Wort aus bekannten Teilen ("Haustürschlüssel")? Dann ist es kein Tippfehler. */
+    private fun istZusammensetzung(klein: String, tiefe: Int): Boolean {
+        val n = klein.length
+        if (n < 7 || tiefe > 1) return false
+        for (s in 3..n - 3) {
+            val rechts = klein.substring(s)
+            val ir = modell.index(rechts)
+            val rechtsOk = (ir >= 0 && rechts.length >= 3) || (tiefe == 0 && rechts.length >= 6 && istZusammensetzung(rechts, tiefe + 1))
+            if (!rechtsOk) continue
+            val links = klein.substring(0, s)
+            for (fuge in fugen) {
+                if (!links.endsWith(fuge)) continue
+                val stamm = links.dropLast(fuge.length)
+                if (stamm.length < 3) continue
+                val il = modell.index(stamm)
+                if (il >= 0 && !modell.istFunktionswort(il)) return true
+            }
+        }
+        return false
+    }
+
+    /** Für die Abstimmung: die besten Kandidaten mit Bewertung und der Wert fürs Stehenlassen. */
+    internal fun erklaere(wort: String, kontext: Kontext = Kontext.KEINER, spur: List<Anschlag?>? = null): String {
+        val klein = wort.lowercase()
+        if (modell.index(klein) >= 0) return "bekannt"
+        val e = rechne(wort, kontext, spur)
+        return "behalten=%.1f (zusammensetzung=%s, beugung=%s) | ".format(behalten(wort, klein, kontext), istZusammensetzung(klein, 0), istBeugung(klein)) +
+            e.alternativen.take(3).joinToString { "%s %.1f (kosten %.1f)".format(it.text, it.bewertung, it.kosten) }
+    }
+
+    /** Was die Leertaste anstelle des getippten Wortes einsetzen würde -- oder null. */
+    fun korrektur(wort: String, kontext: Kontext = Kontext.KEINER, spur: List<Anschlag?>? = null): String? =
+        entscheide(wort, kontext, spur).korrektur
+
+    // ================================================================ Vorschläge
+
+    private fun naechsteWoerter(k: Kontext, anzahl: Int): List<String> {
+        val ctx = kontextNr(k)
+        val vorherKlein = k.wort.lowercase()
+        val eigene = folgen[vorherKlein]
+        val eigeneSumme = eigene?.values?.sum() ?: 0
+        // Je öfter du nach diesem Wort schon etwas geschrieben hast, desto mehr zählt das Eigene:
+        // nach 5 Malen etwa die Hälfte, nach 20 Malen fast alles.
+        val eigenAnteil = eigeneSumme / (eigeneSumme + 5.0)
+        val punkte = HashMap<String, Double>()   // klein -> Wahrscheinlichkeit (gemischt)
+        val grossNach = HashSet<String>()        // Wörter, die an dieser Stelle meist großgeschrieben stehen
+        modell.nachfolger(ctx)?.forEach { e ->
+            val idx = Sprachmodell.folgeNummer(e)
+            punkte[modell.schluessel[idx]] = (1 - eigenAnteil) * Math.pow(2.0, -Sprachmodell.folgeQ(e).toDouble())
+            if (Sprachmodell.folgeGross(e)) grossNach += modell.schluessel[idx]
+        }
+        eigene?.forEach { (w, anzahlGeschrieben) ->
+            val idx = modell.index(w)
+            // Das Wort kann auch im Korpus stehen; sonst kleiner Grundwert aus der Häufigkeit
+            val korpus = punkte[w] ?: (1 - eigenAnteil) * 0.1 * (if (idx >= 0) Math.exp(modell.lnP(idx)) else 1e-7)
+            punkte[w] = korpus + eigenAnteil * anzahlGeschrieben / eigeneSumme
+        }
+        // wer in beiden vorkommt, dessen Korpus-Anteil wurde oben schon gezählt (nicht doppelt)
+        return punkte.entries.sortedByDescending { it.value }.take(anzahl).map { (w, _) ->
+            val idx = modell.index(w)
+            val text = if (idx >= 0) modell.schreibweise(idx) else gelernt[w]?.first ?: w
+            if (k.satzanfang || w in grossNach) grossErstes(text) else text
+        }
+    }
+
+    /** Die [anzahl] wahrscheinlichsten Wörter des Bereichs, die länger sind als [mindestLaenge] -- ohne alles zu sortieren. */
+    private fun besteImBereich(bereich: IntRange, mindestLaenge: Int, ctx: Int, vorherKlein: String, anzahl: Int): List<Int> {
+        val nummern = IntArray(anzahl) { -1 }
+        val punkte = DoubleArray(anzahl) { Double.NEGATIVE_INFINITY }
+        for (i in bereich) {
+            if (modell.schluessel[i].length <= mindestLaenge) continue
+            val s = bewerte(i, ctx, vorherKlein)
+            if (s <= punkte[anzahl - 1]) continue
+            var pos = anzahl - 1
+            while (pos > 0 && punkte[pos - 1] < s) { punkte[pos] = punkte[pos - 1]; nummern[pos] = nummern[pos - 1]; pos-- }
+            punkte[pos] = s
+            nummern[pos] = i
+        }
+        return nummern.filter { it >= 0 }
+    }
+
+    /**
+     * Bis zu [anzahl] Vorschläge für [praefix]; bei leerem Präfix die wahrscheinlichsten nächsten Wörter.
+     * An erster Stelle steht das Getippte selbst, dahinter die Autokorrektur (falls es eine gibt).
+     */
+    fun vorschlaege(praefix: String, kontext: Kontext = Kontext.KEINER, spur: List<Anschlag?>? = null, anzahl: Int = 3): Vorschlaege {
+        if (praefix.isEmpty()) return Vorschlaege(naechsteWoerter(kontext, anzahl), null)
+        val klein = praefix.lowercase()
+        val vorherKlein = kontext.wort.lowercase()
+        val ctx = kontextNr(kontext)
+        val entscheidung = entscheide(praefix, kontext, spur)
+
+        val ergebnis = LinkedHashMap<String, String>()   // klein -> Anzeige
+        fun nimm(text: String) { ergebnis.putIfAbsent(text.lowercase(), text) }
+        nimm(praefix)
+        entscheidung.korrektur?.let { nimm(it) }
+
+        // Ergänzungen: Wörter, die mit dem Getippten beginnen
+        val bereich = modell.praefixBereich(klein)
+        for (i in besteImBereich(bereich, klein.length, ctx, vorherKlein, anzahl)) nimm(angleichen(modell.schreibweise(i), praefix))
+        for (w in nutzerNeueWoerter()) if (w.startsWith(klein) && w.length > klein.length) nimm(angleichen(gelernt.getValue(w).first, praefix))
+
+        // weitere Korrekturen, falls noch Platz ist
+        for (c in entscheidung.alternativen) { if (ergebnis.size >= anzahl) break; nimm(c.text) }
+        return Vorschlaege(ergebnis.values.take(anzahl), entscheidung.korrektur)
+    }
+
+    // ================================================================ Lernen
 
     /** Ein abgeschlossenes Wort merken -- und welches Wort davor stand. */
     fun lerne(wort: String, vorher: String = "", anzahl: Int = 1) {
-        if (wort.length < 2 || wort.length > MAX_LAENGE || !wort.any { it.isLetter() }) return
+        if (wort.length < 2 || wort.length > 40 || !wort.any { it.isLetter() }) return
         if (wort.any { it.isDigit() }) return // Nummern, Codes, Uhrzeiten nicht lernen
-        val schluessel = wort.lowercase()
-        // Mitten im Satz (es gibt ein Vorgaengerwort) zaehlt die getippte Schreibweise.
-        // Am Satzanfang ist ein Grossbuchstabe Pflicht -- dort die bekannte Schreibweise behalten.
-        val bekannt = gelernt[schluessel]?.first ?: grossform[schluessel] ?: schluessel.takeIf { it in rang }
+        val klein = wort.lowercase()
+        // Mitten im Satz (es gibt ein Vorgängerwort) zählt die getippte Schreibweise.
+        // Am Satzanfang ist ein Großbuchstabe Pflicht -- dort die bekannte Schreibweise behalten.
+        val idx = modell.index(klein)
+        val bekannt = gelernt[klein]?.first ?: if (idx >= 0) modell.schreibweise(idx) else null
         val schreibweise = if (vorher.isNotEmpty() || bekannt == null) wort else bekannt
-        gelernt[schluessel] = schreibweise to ((gelernt[schluessel]?.second ?: 0) + anzahl)
-        merkSchluessel = ""
-
+        val neu = gelernt[klein] == null
+        gelernt[klein] = schreibweise to ((gelernt[klein]?.second ?: 0) + anzahl)
+        if (neu && idx < 0) nutzerNeu = null
         if (vorher.isNotEmpty()) {
             val liste = folgen.getOrPut(vorher.lowercase()) { HashMap() }
-            liste[schluessel] = (liste[schluessel] ?: 0) + 1
+            liste[klein] = (liste[klein] ?: 0) + 1
         }
         if (++ungespeichert >= 20) speichere()
     }
 
+    /** Der Nutzer will genau diese Schreibweise (⌫ nach einer Korrektur, Antippen des Getippten): nie wieder ändern. */
+    fun bestaetige(wort: String) {
+        bestaetigt += wort
+        lerne(wort, "", 2)
+        speichere()
+    }
+
     fun vergiss(wort: String) {
-        merkSchluessel = ""
-        val schluessel = wort.lowercase()
-        gelernt.remove(schluessel)
-        folgen.remove(schluessel)
-        folgen.values.forEach { it.remove(schluessel) }
+        val klein = wort.lowercase()
+        gelernt.remove(klein)
+        folgen.remove(klein)
+        folgen.values.forEach { it.remove(klein) }
+        bestaetigt.removeAll { it.lowercase() == klein }
+        nutzerNeu = null
         speichere()
     }
 
     fun vergissAlles() {
-        merkSchluessel = ""
         gelernt.clear()
         folgen.clear()
+        bestaetigt.clear()
+        nutzerNeu = null
         speichere()
     }
 
@@ -238,6 +409,7 @@ class Woerterbuch(
                 text.append("f\t").append(von).append('\t').append(nach).append('\t').append(anzahl).append('\n')
             }
         }
+        bestaetigt.take(MAX_WOERTER).forEach { text.append("b\t").append(it).append('\n') }
         speicher.schreib(text.toString())
         ungespeichert = 0
     }
@@ -251,6 +423,7 @@ class Woerterbuch(
                     teile[2].toIntOrNull()?.let { gelernt[teile[1].lowercase()] = teile[1] to it }
                 teile.size == 4 && teile[0] == "f" ->
                     teile[3].toIntOrNull()?.let { folgen.getOrPut(teile[1]) { HashMap() }[teile[2]] = it }
+                teile.size == 2 && teile[0] == "b" -> bestaetigt += teile[1]
             }
         }
     }
@@ -258,7 +431,5 @@ class Woerterbuch(
     companion object {
         const val MAX_WOERTER = 5000
         const val MAX_FOLGEN = 8
-        const val MAX_LAENGE = 32
-        private val UMLAUTE = mapOf('a' to 'ä', 'ä' to 'a', 'o' to 'ö', 'ö' to 'o', 'u' to 'ü', 'ü' to 'u')
     }
 }

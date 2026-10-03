@@ -39,9 +39,13 @@ class TextLogikTest {
         assertEquals("ß", TextLogik.gross("ß"))
     }
 
-    @Test fun abstand() {
-        assertEquals(0, TextLogik.abstand("haus", "haus"))
-        assertEquals(1, TextLogik.abstand("hause", "haus"))
-        assertEquals(2, TextLogik.abstand("abc", "xyz", 1))
+    @Test fun kontext() {
+        assertEquals(Kontext("guten"), TextLogik.kontext("Einen guten Mo"))
+        assertEquals(Kontext("guten"), TextLogik.kontext("Einen guten "))
+        assertEquals(Kontext.SATZANFANG, TextLogik.kontext(""))
+        assertEquals(Kontext.SATZANFANG, TextLogik.kontext("Fertig. Da"))
+        assertEquals(Kontext.SATZANFANG, TextLogik.kontext("Hallo!\n"))
+        assertEquals(Kontext.KEINER, TextLogik.kontext("Hallo, da"))   // nach dem Komma kein Vorgaengerwort
+        assertEquals(Kontext.SATZANFANG, TextLogik.kontext("Hallo"))   // das erste Wort im Feld beginnt einen Satz
     }
 }

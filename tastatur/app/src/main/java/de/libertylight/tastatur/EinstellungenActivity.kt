@@ -130,6 +130,7 @@ class EinstellungenActivity : Activity() {
         schalter("Ziffern als Hinweis auf der oberen Reihe", e.zifferHinweise) { e.zifferHinweise = it }
         schalter("Wortvorschläge", e.vorschlaege) { e.vorschlaege = it }
         schalter("Autokorrektur (⌫ direkt danach macht sie rückgängig)", e.autokorrektur) { e.autokorrektur = it }
+        schalter("Substantive automatisch großschreiben", e.substantiveGross) { e.substantiveGross = it }
         schalter("Automatische Großschreibung", e.autoGross) { e.autoGross = it }
         schalter("Doppelte Leertaste setzt Punkt", e.doppelLeerPunkt) { e.doppelLeerPunkt = it }
         schalter("Vibration beim Tippen", e.vibration) { e.vibration = it }

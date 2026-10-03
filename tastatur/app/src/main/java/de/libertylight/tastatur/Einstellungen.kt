@@ -64,6 +64,11 @@ class Einstellungen(context: Context) {
         get() = p.getBoolean("gross_beschriftung", false)
         set(v) = setze { putBoolean("gross_beschriftung", v) }
 
+    /** Substantive bei der Autokorrektur großschreiben ("haus" -> "Haus"). */
+    var substantiveGross: Boolean
+        get() = p.getBoolean("substantive_gross", true)
+        set(v) = setze { putBoolean("substantive_gross", v) }
+
     var vibration: Boolean
         get() = p.getBoolean("vibration", true)
         set(v) = setze { putBoolean("vibration", v) }

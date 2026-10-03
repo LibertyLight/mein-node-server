@@ -99,19 +99,25 @@ Was gleich eingesetzt wird, steht **fett** in der Vorschlagsleiste.
   sich und korrigiert es nicht wieder.
 - **Getipptes Wort antippen** (ganz links in der Leiste) übernimmt es so, wie
   es ist, und merkt es sich ebenfalls.
-- Erkannt werden typische Fehler: Nachbartasten auf QWERTZ, vertauschte
-  Buchstaben, vergessene oder verdoppelte Buchstaben, fehlende Umlaute
-  („fur“ → „für“).
+- Die Tastatur weiß, **wo dein Finger aufgesetzt hat**, nicht nur welche Taste
+  getroffen wurde. Ein Druck zwischen `n` und `m` wird eher als Verwechslung
+  gewertet als einer mitten auf der Taste.
+- Erkannt werden: Nachbartasten, vertauschte, vergessene und verdoppelte
+  Buchstaben, fehlende Umlaute und ß („fur“ → „für“, „weiss“ → „weiß“),
+  vergessene Leerzeichen („ichhabe“ → „ich habe“) und kleingetippte
+  Substantive („haus“ → „Haus“, abschaltbar).
+- Der Satz davor fließt ein: Nach „guten“ ist „Morgen“ wahrscheinlicher.
 - Nicht korrigiert wird: in Adress-, E-Mail- und Passwortfeldern, nach
-  `@`, `#` oder `/`, Wörter mit Ziffern, Abkürzungen in GROSSBUCHSTABEN und
-  Wörter, die nur eine Endung an ein bekanntes Wort hängen („Dorfs“).
-  Großgeschriebene Wörter mitten im Satz (oft Namen) werden nur bei kleinen
-  Fehlern korrigiert.
+  `@`, `#` oder `/`, Wörter mit Ziffern oder Apostroph, Abkürzungen in
+  GROSSBUCHSTABEN, Wörter mit nur zwei Buchstaben, gebeugte Formen und
+  Zusammensetzungen aus bekannten Wörtern.
 - Ein Wort, das du zweimal unkorrigiert schreibst, gilt als bekannt.
 
-Bei sehr seltenen echten Wörtern (meist Namen) liegt die Fehlkorrekturrate in
-Tests bei etwa 9 %. Dann einmal ⌫, ab da kennt die Tastatur das Wort.
-Ausschalten lässt sich die Autokorrektur in den Einstellungen.
+In Simulationen werden rund 88 bis 91 % der Tippfehler behoben, und bei
+richtig getippten, aber unbekannten Wörtern (Namen) greift sie in 3,5 bis 5 %
+fälschlich ein. Dann einmal ⌫, ab da kennt die Tastatur das Wort.
+Ausschalten lässt sich die Autokorrektur in den Einstellungen. Messmethode und
+Zahlen: `tastatur/AUTOKORREKTUR.md`.
 
 Herkunft der Wortliste: siehe `tastatur/WOERTERLISTE.md`.
 
