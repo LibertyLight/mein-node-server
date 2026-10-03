@@ -125,7 +125,9 @@ class EinstellungenActivity : Activity() {
         liste.addView(ergebnis)
 
         ueberschrift("3 · Tippen")
-        schalter("Zahlenreihe anzeigen", e.zahlenreihe) { e.zahlenreihe = it }
+        schalter("Zahlenreihe über den Buchstaben", e.zahlenreihe) { e.zahlenreihe = it }
+        schalter("ü ö ä auf eigenen Tasten (sonst per Langdruck auf u, o, a)", e.umlautTasten) { e.umlautTasten = it }
+        schalter("Ziffern als Hinweis auf der oberen Reihe", e.zifferHinweise) { e.zifferHinweise = it }
         schalter("Wortvorschläge", e.vorschlaege) { e.vorschlaege = it }
         schalter("Autokorrektur (⌫ direkt danach macht sie rückgängig)", e.autokorrektur) { e.autokorrektur = it }
         schalter("Automatische Großschreibung", e.autoGross) { e.autoGross = it }

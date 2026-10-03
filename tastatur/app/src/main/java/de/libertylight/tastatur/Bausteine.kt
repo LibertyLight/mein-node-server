@@ -46,6 +46,17 @@ class Bausteine(private val context: Context, val thema: Thema) {
             setOnClickListener { klick() }
         }
 
+    /** Wie [symbol], aber die Schriftgroesse in Pixeln -- fuer Leisten, die mit der Bildschirmbreite wachsen. */
+    fun symbolPx(text: String, beschreibung: String, px: Float, klick: () -> Unit): TextView =
+        TextView(context).apply {
+            this.text = text
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, px)
+            gravity = Gravity.CENTER
+            setTextColor(thema.text)
+            contentDescription = beschreibung
+            setOnClickListener { klick() }
+        }
+
     fun beschriftung(text: String, groesse: Float = 13f, fett: Boolean = false): TextView = TextView(context).apply {
         this.text = text
         textSize = groesse

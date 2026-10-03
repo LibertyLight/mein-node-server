@@ -23,6 +23,13 @@ android {
         }
     }
 
+    testOptions {
+        unitTests {
+            // Robolectric braucht die Android-Ressourcen, um Views auf dem Rechner zu zeichnen
+            isIncludeAndroidResources = true
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -39,4 +46,6 @@ dependencies {
     // Keine Laufzeit-Bibliotheken: alles aus dem Android-SDK. Haelt die APK klein.
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20250517")
+    // Zeichnet die Tastatur auf dem Rechner mit echter Android-Grafik -- fuer den Vergleich mit dem Referenz-Screenshot
+    testImplementation("org.robolectric:robolectric:4.17")
 }

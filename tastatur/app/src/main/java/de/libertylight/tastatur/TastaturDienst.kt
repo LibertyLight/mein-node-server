@@ -52,6 +52,7 @@ class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
     private lateinit var statusText: TextView
 
     private var stand = -1
+    private var leistenHoehe = 0
     private var woerterLoeschen = 0
     private var seite = Seite.BUCHSTABEN
     private var tastenfeldSichtbar = true
@@ -133,7 +134,7 @@ class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
             InputType.TYPE_CLASS_PHONE -> Seite.TELEFON
             else -> Seite.BUCHSTABEN
         }
-        tastenfeld.enterText = enterBeschriftung(info)
+        tastenfeld.enterArt = enterArtFuer(info)
         if (!restarting) tastenfeld.umschalt = Umschalt.AUS
         automatischesLeer = false
         letzteKorrektur = null
@@ -166,6 +167,9 @@ class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
         stand = einstellungen.stand
         val thema = if (einstellungen.istDunkel(this)) Thema.DUNKEL else Thema.HELL
         b = Bausteine(this, thema)
+        // Referenz-Screenshot: Leiste 149 px hoch bei 1080 px Breite, Schrift darin etwa 45 % der Hoehe
+        val schirmBreite = resources.displayMetrics.widthPixels
+        leistenHoehe = (0.139f * schirmBreite).coerceIn(b.dp(44).toFloat(), b.dp(60).toFloat()).toInt()
         tastenfeld = TastenfeldView(this, this).apply {
             this.thema = thema
             hoehenFaktor = einstellungen.hoehe / 100f
@@ -178,7 +182,7 @@ class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
 
         val spalte = b.senkrecht().apply {
             setBackgroundColor(thema.hintergrund)
-            addView(baueLeiste(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, b.dp(46)))
+            addView(baueLeiste(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, leistenHoehe))
             addView(inhalt, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
 
@@ -223,7 +227,7 @@ class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
                 "⌄" to "Tastatur ausblenden" to { requestHideSelf(0) },
             )
             for ((paar, klick) in eintraege) {
-                addView(b.symbol(paar.first, paar.second, 20f, klick), b.abstand(breite = 0, hoehe = ViewGroup.LayoutParams.MATCH_PARENT, gewicht = 1f))
+                addView(b.symbolPx(paar.first, paar.second, 0.4f * leistenHoehe, klick), b.abstand(breite = 0, hoehe = ViewGroup.LayoutParams.MATCH_PARENT, gewicht = 1f))
             }
         }
 
@@ -250,7 +254,7 @@ class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
         for (v in listOf(werkzeuge, vorschlagLeiste, statusLeiste)) v.visibility = if (v === welche) View.VISIBLE else View.GONE
     }
 
-    private fun flaechenHoehe(): Int = maxOf(tastenfeld.height, b.dp(5 * 54 * einstellungen.hoehe / 100))
+    private fun flaechenHoehe(): Int = maxOf(tastenfeld.height, b.dp(4 * 66))
 
     private fun zeigeFlaeche(flaeche: View) {
         val hoehe = flaechenHoehe()
@@ -261,7 +265,7 @@ class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
     }
 
     fun zeigeTastatur() {
-        tastenfeld.reihen = Belegung.reihen(seite, einstellungen.zahlenreihe)
+        tastenfeld.reihen = Belegung.reihen(seite, einstellungen.optionen)
         if (!tastenfeldSichtbar || tastenfeld.parent == null) {
             inhalt.removeAllViews()
             inhalt.addView(tastenfeld)
@@ -367,7 +371,7 @@ class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
 
     // ================================================================ Tasten
 
-    override fun zeichen(text: String) {
+    override fun zeichen(text: String, anschlag: Anschlag?) {
         val ic = currentInputConnection ?: return
         val t = if (tastenfeld.umschalt != Umschalt.AUS && text.length == 1) TextLogik.gross(text) else text
         letzteKorrektur = null
@@ -411,7 +415,8 @@ class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
             Art.SYMBOLE -> { seite = Seite.SYMBOLE; zeigeTastatur() }
             Art.SYMBOLE2 -> { seite = Seite.SYMBOLE2; zeigeTastatur() }
             Art.BUCHSTABEN -> { seite = Seite.BUCHSTABEN; zeigeTastatur() }
-            Art.ZEICHEN -> {}
+            Art.EMOJI -> zeigeFlaeche(EmojiFlaeche(this, b).baue())
+            Art.ZEICHEN, Art.ABSTAND -> {}
         }
     }
 
@@ -460,15 +465,15 @@ class TastaturDienst : InputMethodService(), TastenfeldView.Zuhoerer {
         }
     }
 
-    private fun enterBeschriftung(info: EditorInfo): String {
-        if ((info.imeOptions and EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0) return "↵"
+    private fun enterArtFuer(info: EditorInfo): EnterArt {
+        if ((info.imeOptions and EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0) return EnterArt.ZEILE
         return when (info.imeOptions and EditorInfo.IME_MASK_ACTION) {
-            EditorInfo.IME_ACTION_SEND -> "➤"
-            EditorInfo.IME_ACTION_SEARCH -> "🔍"
-            EditorInfo.IME_ACTION_GO -> "→"
-            EditorInfo.IME_ACTION_NEXT -> "⇥"
-            EditorInfo.IME_ACTION_DONE -> "✓"
-            else -> "↵"
+            EditorInfo.IME_ACTION_SEND -> EnterArt.SENDEN
+            EditorInfo.IME_ACTION_SEARCH -> EnterArt.SUCHEN
+            EditorInfo.IME_ACTION_GO -> EnterArt.LOS
+            EditorInfo.IME_ACTION_NEXT, EditorInfo.IME_ACTION_PREVIOUS -> EnterArt.WEITER
+            EditorInfo.IME_ACTION_DONE -> EnterArt.FERTIG
+            else -> EnterArt.ZEILE
         }
     }
 

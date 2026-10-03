@@ -24,8 +24,20 @@ class Einstellungen(context: Context) {
         set(v) = setze { putString("token", v.trim()) }
 
     var zahlenreihe: Boolean
-        get() = p.getBoolean("zahlenreihe", true)
+        get() = p.getBoolean("zahlenreihe", false)
         set(v) = setze { putBoolean("zahlenreihe", v) }
+
+    /** ü ö ä auf eigenen Tasten (kleinere Tasten) statt per Langdruck. */
+    var umlautTasten: Boolean
+        get() = p.getBoolean("umlaut_tasten", false)
+        set(v) = setze { putBoolean("umlaut_tasten", v) }
+
+    /** Ziffern als kleine Hinweise auf der oberen Reihe. */
+    var zifferHinweise: Boolean
+        get() = p.getBoolean("ziffer_hinweise", false)
+        set(v) = setze { putBoolean("ziffer_hinweise", v) }
+
+    val optionen: Optionen get() = Optionen(zahlenreihe, umlautTasten, zifferHinweise)
 
     var autoGross: Boolean
         get() = p.getBoolean("auto_gross", true)
@@ -117,29 +129,33 @@ data class Thema(
     val taste: Int,
     val sonder: Int,
     val gedrueckt: Int,
+    val schatten: Int,
     val text: Int,
     val textLeise: Int,
     val akzent: Int,
     val akzentText: Int,
 ) {
     companion object {
+        // Hell: Werte aus dem Referenz-Screenshot (Hintergrund 241, Tasten 255, Sondertasten 250, Schrift 41)
         val HELL = Thema(
-            hintergrund = Color.parseColor("#EEEFF3"),
+            hintergrund = Color.parseColor("#F1F1F1"),
             taste = Color.parseColor("#FFFFFF"),
-            sonder = Color.parseColor("#D9DCE3"),
-            gedrueckt = Color.parseColor("#BFC4CF"),
-            text = Color.parseColor("#1B1C20"),
-            textLeise = Color.parseColor("#7A7F8C"),
+            sonder = Color.parseColor("#FAFAFA"),
+            gedrueckt = Color.parseColor("#D6D8DE"),
+            schatten = Color.parseColor("#26000000"),
+            text = Color.parseColor("#292929"),
+            textLeise = Color.parseColor("#777777"),
             akzent = Color.parseColor("#3E7BFA"),
             akzentText = Color.WHITE,
         )
         val DUNKEL = Thema(
-            hintergrund = Color.parseColor("#121316"),
-            taste = Color.parseColor("#2B2D33"),
-            sonder = Color.parseColor("#1E2025"),
-            gedrueckt = Color.parseColor("#4A4E58"),
-            text = Color.parseColor("#F1F2F5"),
-            textLeise = Color.parseColor("#9AA0AD"),
+            hintergrund = Color.parseColor("#1B1B1D"),
+            taste = Color.parseColor("#2E2F33"),
+            sonder = Color.parseColor("#27282B"),
+            gedrueckt = Color.parseColor("#4A4D55"),
+            schatten = Color.parseColor("#66000000"),
+            text = Color.parseColor("#ECECEE"),
+            textLeise = Color.parseColor("#9A9DA6"),
             akzent = Color.parseColor("#5C8DFF"),
             akzentText = Color.WHITE,
         )

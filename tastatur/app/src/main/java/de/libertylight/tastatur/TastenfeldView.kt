@@ -3,7 +3,9 @@ package de.libertylight.tastatur
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Handler
@@ -18,6 +20,10 @@ enum class Umschalt { AUS, EINMAL, FEST }
 /**
  * Zeichnet die Tasten selbst und wertet Beruehrungen aus.
  *
+ * Alle Masse sind Anteile der Breite und stammen aus dem Referenz-Screenshot:
+ * Tastenbreite 92 von 108 px je Spalte, Lücke 16 px, Zeilenabstand 183 px, Schrift 86 px
+ * (alles bei 1080 px Bildschirmbreite). So sieht es auf jedem Handy gleich aus.
+ *
  * - Zeichen werden beim Loslassen geschrieben, damit langes Druecken Alternativen zeigen kann.
  * - Tippt ein zweiter Finger, bevor der erste losgelassen hat, wird der erste sofort geschrieben
  *   (schnelles Tippen mit zwei Daumen).
@@ -28,7 +34,8 @@ enum class Umschalt { AUS, EINMAL, FEST }
 class TastenfeldView(context: Context, private val zuhoerer: Zuhoerer) : View(context) {
 
     interface Zuhoerer {
-        fun zeichen(text: String)
+        /** [anschlag] ist null, wenn das Zeichen nicht direkt getippt wurde (Langdruck-Auswahl). */
+        fun zeichen(text: String, anschlag: Anschlag?)
         fun aktion(art: Art)
         fun cursor(schritte: Int)
         fun leertasteLang()
@@ -43,8 +50,9 @@ class TastenfeldView(context: Context, private val zuhoerer: Zuhoerer) : View(co
         set(v) { field = v; requestLayout(); berechne(); invalidate() }
     var umschalt = Umschalt.AUS
         set(v) { field = v; invalidate() }
-    var enterText = "↵"
+    var enterArt = EnterArt.ZEILE
         set(v) { field = v; invalidate() }
+    /** Tastenhoehe, 1 = wie im Referenz-Screenshot. */
     var hoehenFaktor = 1f
         set(v) { field = v; requestLayout() }
     /** Groesse der Beschriftung, unabhaengig von der Tastenhoehe (1 = Vorgabe). */
@@ -56,21 +64,31 @@ class TastenfeldView(context: Context, private val zuhoerer: Zuhoerer) : View(co
     var vibration = true
 
     private val dichte = resources.displayMetrics.density
-    private val tastenHoehe get() = 54 * dichte * hoehenFaktor
-    private val luecke = 3 * dichte
-    private val radius = 8 * dichte
+
+    // Masse, aus der Breite berechnet
+    private var spalte = 0f
+    private var zeilenHoehe = 0f
+    private var luecke = 0f
+    private var lueckeHoch = 0f
+    private var tasteHoehe = 0f
 
     private val plaetze = ArrayList<Platz>()
     private val farbe = Paint(Paint.ANTI_ALIAS_FLAG)
     private val schrift = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
-    private val schriftBuchstabe = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-    private val schriftSonder = Typeface.create("sans-serif-medium", Typeface.BOLD)
+    private val strich = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val schriftBuchstabe = Typeface.create("sans-serif", Typeface.NORMAL)
+    private val schriftBeschriftung = Typeface.create("sans-serif-medium", Typeface.NORMAL)
     private val zeiger = Handler(Looper.getMainLooper())
 
     // Zustand der aktuellen Beruehrung
     private var aktiv: Platz? = null
     private var zeigerId = -1
     private var startX = 0f
+    private var startY = 0f
     private var leerVersatz = 0
     private var langGedrueckt = false
     private var auswahl: List<String> = emptyList()
@@ -87,9 +105,20 @@ class TastenfeldView(context: Context, private val zuhoerer: Zuhoerer) : View(co
         }
     }
 
+    /** Mitte jeder Zeichentaste in Tastenbreiten -- Grundlage fuer die Autokorrektur. */
+    fun tastenkarte(): Map<Char, Pair<Float, Float>> =
+        Raster.mitten(reihen, if (spalte > 0f) zeilenHoehe / spalte else Raster.ZEILEN_VERHAELTNIS)
+
+    private fun zeilenHoeheFuer(breite: Float): Float {
+        val breiteDp = breite / dichte
+        val basis = if (breiteDp >= 560f) 50f * dichte // Querformat, Tablet: sonst fuellt die Tastatur den Bildschirm
+        else (Raster.ZEILEN_VERHAELTNIS * breite / 10f).coerceIn(52f * dichte, 76f * dichte)
+        return basis * hoehenFaktor
+    }
+
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val breite = MeasureSpec.getSize(widthMeasureSpec)
-        setMeasuredDimension(breite, (reihen.size * tastenHoehe + luecke * 2).toInt())
+        setMeasuredDimension(breite, (reihen.size * zeilenHoeheFuer(breite.toFloat())).toInt())
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) = berechne()
@@ -97,81 +126,193 @@ class TastenfeldView(context: Context, private val zuhoerer: Zuhoerer) : View(co
     private fun berechne() {
         plaetze.clear()
         if (width == 0) return
-        var y = luecke
-        for (reihe in reihen) {
-            val summe = reihe.sumOf { it.breite.toDouble() }.toFloat()
-            val einheit = (width - luecke) / summe
-            var x = luecke / 2
+        val w = width.toFloat()
+        spalte = w / 10f
+        zeilenHoehe = zeilenHoeheFuer(w)
+        luecke = (0.0148f * w).coerceIn(3f * dichte, 7.5f * dichte)
+        lueckeHoch = luecke * 1.12f
+        tasteHoehe = zeilenHoehe - lueckeHoch
+
+        reihen.forEachIndexed { r, reihe ->
+            val einheit = w / reihe.sumOf { it.breite.toDouble() }.toFloat()
+            var x = 0f
+            val oben = r * zeilenHoehe
             for (taste in reihe) {
-                val w = taste.breite * einheit
-                plaetze += Platz(taste, RectF(x + luecke / 2, y + luecke / 2, x + w - luecke / 2, y + tastenHoehe - luecke / 2))
-                x += w
+                val breite = taste.breite * einheit
+                if (taste.art != Art.ABSTAND) {
+                    plaetze += Platz(taste, RectF(x + luecke / 2, oben + lueckeHoch / 2, x + breite - luecke / 2, oben + zeilenHoehe - lueckeHoch / 2))
+                }
+                x += breite
             }
-            y += tastenHoehe
         }
     }
 
     // ---------- Zeichnen ----------
 
-    private fun beschriftung(taste: Taste): String = when (taste.art) {
-        Art.ZEICHEN -> if ((umschalt != Umschalt.AUS || grossBeschriftung) && taste.text.length == 1) TextLogik.gross(taste.text) else taste.text
-        Art.SHIFT -> if (umschalt == Umschalt.FEST) "⇪" else "⇧"
-        Art.ENTER -> enterText
+    private fun beschriftung(taste: Taste): String = when {
+        taste.art == Art.ZEICHEN && taste.text.length == 1 &&
+            (umschalt != Umschalt.AUS || grossBeschriftung) -> TextLogik.gross(taste.text)
         else -> taste.text
     }
 
+    private fun istSymbol(art: Art) = art == Art.SHIFT || art == Art.LOESCHEN || art == Art.ENTER || art == Art.EMOJI
+
     override fun onDraw(canvas: Canvas) {
         canvas.drawColor(thema.hintergrund)
+        val aktionEnter = enterArt != EnterArt.ZEILE
         for (platz in plaetze) {
             val t = platz.taste
             val gedrueckt = platz === aktiv && !langGedrueckt
+            val akzentTaste = t.art == Art.ENTER && aktionEnter
+
+            // hauchduenner Schatten unter der Taste
+            farbe.color = thema.schatten
+            canvas.drawRoundRect(platz.rect.left, platz.rect.top + 1.2f * dichte, platz.rect.right, platz.rect.bottom + 1.2f * dichte, luecke, luecke, farbe)
+
             farbe.color = when {
                 gedrueckt -> thema.gedrueckt
-                t.art == Art.ENTER -> thema.akzent
-                t.art == Art.SHIFT && umschalt != Umschalt.AUS -> thema.akzent
+                akzentTaste -> thema.akzent
                 t.art == Art.ZEICHEN || t.art == Art.LEER -> thema.taste
                 else -> thema.sonder
             }
-            canvas.drawRoundRect(platz.rect, radius, radius, farbe)
+            canvas.drawRoundRect(platz.rect, luecke, luecke, farbe)
 
-            val hervorgehoben = t.art == Art.ENTER || (t.art == Art.SHIFT && umschalt != Umschalt.AUS)
-            schrift.color = if (hervorgehoben) thema.akzentText else if (t.art == Art.LEER) thema.textLeise else thema.text
-            val text = beschriftung(t)
-            schrift.typeface = if (t.art == Art.ZEICHEN) schriftBuchstabe else schriftSonder
-            // Nie groesser als 70 % der Taste, sonst stoesst die Schrift an den Rand
-            val hoechstens = platz.rect.height() * 0.7f
-            schrift.textSize = when {
-                t.art == Art.LEER -> 14 * dichte * schriftFaktor.coerceAtMost(1.2f)
-                text.length > 2 -> 16 * dichte * schriftFaktor.coerceAtMost(1.2f)
-                t.art != Art.ZEICHEN -> 24 * dichte * schriftFaktor
-                else -> 27 * dichte * schriftFaktor
-            }.coerceAtMost(hoechstens)
-            canvas.drawText(text, platz.rect.centerX(), platz.rect.centerY() - (schrift.descent() + schrift.ascent()) / 2, schrift)
-
+            val textFarbe = when {
+                akzentTaste -> thema.akzentText
+                t.art == Art.LEER -> thema.textLeise
+                else -> thema.text
+            }
+            if (istSymbol(t.art)) {
+                zeichneSymbol(canvas, t.art, platz.rect, if (akzentTaste) thema.akzentText else textFarbe)
+            } else {
+                zeichneText(canvas, t, platz.rect, textFarbe)
+            }
             if (t.hinweis.isNotEmpty()) {
                 schrift.color = thema.textLeise
-                schrift.textSize = 11 * dichte * schriftFaktor.coerceAtMost(1.25f)
-                schrift.typeface = Typeface.DEFAULT
-                canvas.drawText(t.hinweis, platz.rect.right - 7 * dichte, platz.rect.top + 12 * dichte, schrift)
+                schrift.textSize = 0.17f * tasteHoehe * schriftFaktor.coerceAtMost(1.25f)
+                schrift.typeface = schriftBuchstabe
+                canvas.drawText(t.hinweis, platz.rect.right - 0.13f * platz.rect.width(), platz.rect.top + 0.24f * tasteHoehe, schrift)
             }
         }
         if (langGedrueckt && auswahl.isNotEmpty()) zeichneAuswahl(canvas)
     }
 
+    private fun zeichneText(canvas: Canvas, t: Taste, rect: RectF, textFarbe: Int) {
+        schrift.color = textFarbe
+        val text = beschriftung(t)
+        when {
+            t.art == Art.LEER -> {
+                schrift.typeface = schriftBuchstabe
+                schrift.textSize = 0.2f * tasteHoehe * schriftFaktor.coerceAtMost(1.2f)
+            }
+            t.art == Art.ZEICHEN && text.length == 1 -> {
+                schrift.typeface = schriftBuchstabe
+                // Referenz: Schrift 86 px bei 165 px Tastenhoehe
+                schrift.textSize = 0.52f * tasteHoehe * schriftFaktor
+            }
+            else -> {
+                schrift.typeface = schriftBeschriftung
+                schrift.textSize = 0.27f * tasteHoehe * schriftFaktor.coerceAtMost(1.3f)
+            }
+        }
+        // Nie breiter als die Taste
+        val maxBreite = rect.width() - 6 * dichte
+        val breite = schrift.measureText(text)
+        if (breite > maxBreite) schrift.textSize *= maxBreite / breite
+        canvas.drawText(text, rect.centerX(), rect.centerY() - (schrift.descent() + schrift.ascent()) / 2, schrift)
+    }
+
+    // Symbole auf einem 24x24-Raster, wie bei Icon-Schriften
+    private fun pfad(block: Path.() -> Unit) = Path().apply(block)
+
+    private val pfadShift = pfad {
+        moveTo(12f, 4.5f); lineTo(4.5f, 12.5f); lineTo(9f, 12.5f); lineTo(9f, 18.5f)
+        lineTo(15f, 18.5f); lineTo(15f, 12.5f); lineTo(19.5f, 12.5f); close()
+    }
+    private val pfadLoeschen = pfad {
+        moveTo(9f, 5.5f); lineTo(20.5f, 5.5f); lineTo(20.5f, 18.5f); lineTo(9f, 18.5f); lineTo(3f, 12f); close()
+        moveTo(12.6f, 9.4f); lineTo(17.4f, 14.6f)
+        moveTo(17.4f, 9.4f); lineTo(12.6f, 14.6f)
+    }
+    private val pfadEnter = mapOf(
+        EnterArt.ZEILE to pfad {
+            moveTo(19.5f, 6f); lineTo(19.5f, 12.5f); lineTo(5.5f, 12.5f)
+            moveTo(9.5f, 8.3f); lineTo(5.3f, 12.5f); lineTo(9.5f, 16.7f)
+        },
+        EnterArt.SENDEN to pfad {
+            moveTo(4f, 4.5f); lineTo(20.5f, 12f); lineTo(4f, 19.5f); lineTo(6.5f, 12f); close()
+            moveTo(6.5f, 12f); lineTo(14f, 12f)
+        },
+        EnterArt.SUCHEN to pfad {
+            addCircle(10.5f, 10.5f, 5.8f, Path.Direction.CW)
+            moveTo(14.8f, 14.8f); lineTo(20f, 20f)
+        },
+        EnterArt.LOS to pfad {
+            moveTo(4.5f, 12f); lineTo(19.5f, 12f)
+            moveTo(13.5f, 6f); lineTo(19.5f, 12f); lineTo(13.5f, 18f)
+        },
+        EnterArt.WEITER to pfad {
+            moveTo(3.5f, 12f); lineTo(16f, 12f)
+            moveTo(11f, 7f); lineTo(16f, 12f); lineTo(11f, 17f)
+            moveTo(20f, 6.5f); lineTo(20f, 17.5f)
+        },
+        EnterArt.FERTIG to pfad {
+            moveTo(4.5f, 12.5f); lineTo(9.8f, 17.5f); lineTo(19.5f, 7f)
+        },
+    )
+    private val pfadEmoji = pfad {
+        addCircle(12f, 12f, 8.6f, Path.Direction.CW)
+        moveTo(8.2f, 13.6f); quadTo(12f, 18f, 15.8f, 13.6f)
+    }
+    private val matrix = Matrix()
+
+    private fun zeichneSymbol(canvas: Canvas, art: Art, rect: RectF, farbeSymbol: Int) {
+        val groesse = 0.46f * tasteHoehe
+        val skala = groesse / 24f
+
+        val pfad = when (art) {
+            Art.SHIFT -> pfadShift
+            Art.LOESCHEN -> pfadLoeschen
+            Art.EMOJI -> pfadEmoji
+            else -> pfadEnter.getValue(enterArt)
+        }
+        val gefuellt = art == Art.SHIFT && umschalt != Umschalt.AUS
+        val farbeAktiv = if (gefuellt) thema.akzent else farbeSymbol
+        strich.color = farbeAktiv
+        farbe.color = farbeAktiv
+
+        canvas.save()
+        matrix.setScale(skala, skala)
+        matrix.postTranslate(rect.centerX() - groesse / 2, rect.centerY() - groesse / 2)
+        canvas.concat(matrix)
+        // Das Zeichenraster ist 24 Einheiten gross; Strichstaerke dort in Rasterwerten
+        strich.strokeWidth = 1.9f
+        strich.style = if (gefuellt) Paint.Style.FILL_AND_STROKE else Paint.Style.STROKE
+        canvas.drawPath(pfad, strich)
+        strich.style = Paint.Style.STROKE
+        if (art == Art.SHIFT && umschalt == Umschalt.FEST) canvas.drawLine(9f, 21.5f, 15f, 21.5f, strich)
+        if (art == Art.EMOJI) {
+            farbe.style = Paint.Style.FILL
+            canvas.drawCircle(9f, 9.8f, 1.15f, farbe)
+            canvas.drawCircle(15f, 9.8f, 1.15f, farbe)
+        }
+        canvas.restore()
+    }
+
     private fun zeichneAuswahl(canvas: Canvas) {
         farbe.color = thema.sonder
         farbe.setShadowLayer(6 * dichte, 0f, 2 * dichte, 0x55000000)
-        canvas.drawRoundRect(auswahlRect, radius, radius, farbe)
+        canvas.drawRoundRect(auswahlRect, luecke, luecke, farbe)
         farbe.clearShadowLayer()
         val zelle = auswahlRect.width() / auswahl.size
         auswahl.forEachIndexed { i, zeichen ->
             val links = auswahlRect.left + i * zelle
             if (i == auswahlIndex) {
                 farbe.color = thema.akzent
-                canvas.drawRoundRect(RectF(links + 2, auswahlRect.top + 2, links + zelle - 2, auswahlRect.bottom - 2), radius, radius, farbe)
+                canvas.drawRoundRect(RectF(links + 2, auswahlRect.top + 2, links + zelle - 2, auswahlRect.bottom - 2), luecke, luecke, farbe)
             }
             schrift.color = if (i == auswahlIndex) thema.akzentText else thema.text
-            schrift.textSize = (25 * dichte * schriftFaktor).coerceAtMost(auswahlRect.height() * 0.7f)
+            schrift.textSize = (0.42f * tasteHoehe * schriftFaktor).coerceAtMost(auswahlRect.height() * 0.7f)
             schrift.typeface = schriftBuchstabe
             val text = if (umschalt != Umschalt.AUS) TextLogik.gross(zeichen) else zeichen
             canvas.drawText(text, links + zelle / 2, auswahlRect.centerY() - (schrift.descent() + schrift.ascent()) / 2, schrift)
@@ -180,9 +321,19 @@ class TastenfeldView(context: Context, private val zuhoerer: Zuhoerer) : View(co
 
     // ---------- Beruehrung ----------
 
-    private fun platzBei(x: Float, y: Float): Platz? =
-        plaetze.firstOrNull { x >= it.rect.left - luecke && x <= it.rect.right + luecke && y >= it.rect.top - luecke && y <= it.rect.bottom + luecke }
-            ?: plaetze.minByOrNull { abs(it.rect.centerX() - x) + abs(it.rect.centerY() - y) }
+    /** Die Taste unter dem Finger; in den Luecken zaehlt die naechste. */
+    private fun platzBei(x: Float, y: Float): Platz? {
+        var beste: Platz? = null
+        var kuerzeste = Float.MAX_VALUE
+        for (p in plaetze) {
+            val dx = maxOf(p.rect.left - x, 0f, x - p.rect.right)
+            val dy = maxOf(p.rect.top - y, 0f, y - p.rect.bottom)
+            val d = dx * dx + dy * dy
+            if (d < kuerzeste) { kuerzeste = d; beste = p }
+            if (d == 0f) break
+        }
+        return beste
+    }
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
@@ -210,6 +361,7 @@ class TastenfeldView(context: Context, private val zuhoerer: Zuhoerer) : View(co
         aktiv = platz
         zeigerId = id
         startX = x
+        startY = y
         leerVersatz = 0
         langGedrueckt = false
         rueckmeldung()
@@ -258,11 +410,11 @@ class TastenfeldView(context: Context, private val zuhoerer: Zuhoerer) : View(co
         langGedrueckt = true
         auswahl = alternativen
         auswahlIndex = 0
-        val zelle = platz.rect.width().coerceAtLeast(34 * dichte)
+        val zelle = maxOf(platz.rect.width(), 40 * dichte)
         val breite = zelle * auswahl.size
         val links = (platz.rect.centerX() - zelle / 2).coerceIn(luecke, maxOf(luecke, width - breite - luecke))
-        val oben = (platz.rect.top - tastenHoehe).coerceAtLeast(0f)
-        auswahlRect = RectF(links, oben, links + breite, oben + tastenHoehe - luecke)
+        val oben = (platz.rect.top - tasteHoehe - lueckeHoch).coerceAtLeast(0f)
+        auswahlRect = RectF(links, oben, links + breite, oben + tasteHoehe)
         rueckmeldung()
         invalidate()
     }
@@ -276,10 +428,13 @@ class TastenfeldView(context: Context, private val zuhoerer: Zuhoerer) : View(co
         if (platz != null && !abbrechen) {
             val t = platz.taste
             when {
-                langGedrueckt && auswahl.isNotEmpty() -> zuhoerer.zeichen(auswahl[auswahlIndex])
+                langGedrueckt && auswahl.isNotEmpty() -> zuhoerer.zeichen(auswahl[auswahlIndex], null)
                 langGedrueckt -> {}
                 t.art == Art.LEER && leerVersatz != 0 -> {}
-                t.art == Art.ZEICHEN -> zuhoerer.zeichen(t.text)
+                t.art == Art.ZEICHEN -> {
+                    val anschlag = if (t.text.length == 1 && spalte > 0f) Anschlag(t.text[0], startX / spalte, startY / spalte) else null
+                    zuhoerer.zeichen(t.text, anschlag)
+                }
                 t.art == Art.LOESCHEN -> {}
                 else -> zuhoerer.aktion(t.art)
             }
